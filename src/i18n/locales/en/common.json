@@ -1,0 +1,17 @@
+{
+  "common.comingSoon": "Coming soon, this feature is under construction.",
+  "settings.title": "Settings",
+  "settings.nav.general": "General",
+  "settings.nav.model": "Model",
+  "settings.nav.advanced": "Advanced",
+  "settings.general.title": "Settings - General",
+  "settings.theme.label": "Theme",
+  "settings.theme.light": "Light",
+  "settings.theme.dark": "Dark",
+  "settings.theme.system": "System",
+  "settings.theme.quickDark": "Quick Dark Mode",
+  "settings.language.label": "Language",
+  "settings.language.zh": "Chinese",
+  "settings.language.en": "English",
+  "settings.storage.path": "Config directory"
+}

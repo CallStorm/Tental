@@ -1,0 +1,17 @@
+{
+  "common.comingSoon": "Coming Soon，功能开发中",
+  "settings.title": "设置",
+  "settings.nav.general": "通用",
+  "settings.nav.model": "模型",
+  "settings.nav.advanced": "高级",
+  "settings.general.title": "设置 - 通用",
+  "settings.theme.label": "主题",
+  "settings.theme.light": "浅色",
+  "settings.theme.dark": "深色",
+  "settings.theme.system": "跟随系统",
+  "settings.theme.quickDark": "快速深色模式",
+  "settings.language.label": "语言",
+  "settings.language.zh": "中文",
+  "settings.language.en": "English",
+  "settings.storage.path": "配置文件目录"
+}
