@@ -687,7 +687,9 @@ export function ChatPage() {
               >
                 <div
                   className={cn(
-                    'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
+                    m.role === 'assistant'
+                      ? 'w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
+                      : 'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
                     m.role === 'user'
                       ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                       : m.role === 'system'
