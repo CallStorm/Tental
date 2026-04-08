@@ -706,25 +706,6 @@ export function ChatPage() {
                   </span>
                   {m.role === 'assistant' ? (
                     <>
-                      <div className="mb-1 flex items-center justify-end">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void copyText(
-                              [
-                                m.thinking ? `# ${t('chat.thinking.label')}\n${m.thinking}\n` : '',
-                                m.content,
-                              ]
-                                .filter(Boolean)
-                                .join('\n'),
-                            )
-                          }
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                          aria-label="Copy"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
                       {m.thinking ? (
                         <details
                           className="group mb-3 rounded-xl border border-slate-200/90 bg-slate-50 px-3 py-2 dark:border-slate-600/60 dark:bg-slate-800/50"
@@ -749,6 +730,26 @@ export function ChatPage() {
                       ) : (
                         <ChatMarkdown text={m.content} />
                       )}
+                      <div className="mt-2 flex items-center justify-start">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyText(
+                              [
+                                m.thinking ? `# ${t('chat.thinking.label')}\n${m.thinking}\n` : '',
+                                m.content,
+                              ]
+                                .filter(Boolean)
+                                .join('\n'),
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                          aria-label="Copy"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy</span>
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <p className="whitespace-pre-wrap">{m.content}</p>
