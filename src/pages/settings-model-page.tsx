@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -22,30 +22,24 @@ function maskKey(): string {
   return '******'
 }
 
-function ProviderLogo({ type }: { type: ProviderType }) {
+function ProviderLogo() {
   return (
     <div
       className={cn(
         'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-sm',
-        type === 'minimax_cn'
-          ? 'bg-gradient-to-br from-pink-400 via-orange-300 to-amber-400'
-          : 'bg-gradient-to-br from-sky-500 to-indigo-600',
+        'bg-gradient-to-br from-pink-400 via-orange-300 to-amber-400',
       )}
       aria-hidden
     >
-      {type === 'minimax_cn' ? (
-        <span className="flex gap-0.5">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="block h-5 w-0.5 rounded-full bg-white/90"
-              style={{ transform: `scaleY(${0.65 + i * 0.12})` }}
-            />
-          ))}
-        </span>
-      ) : (
-        <span className="text-xs font-bold text-white">DS</span>
-      )}
+      <span className="flex gap-0.5">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="block h-5 w-0.5 rounded-full bg-white/90"
+            style={{ transform: `scaleY(${0.65 + i * 0.12})` }}
+          />
+        ))}
+      </span>
     </div>
   )
 }
@@ -59,6 +53,7 @@ export function SettingsModelPage() {
   const [draftModel, setDraftModel] = useState(PRESETS.minimax_cn.models[0].value)
   const [testBusy, setTestBusy] = useState<'connection' | 'multimodal' | null>(null)
   const [testHint, setTestHint] = useState<string | null>(null)
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null)
 
   const preset = PRESETS[draftType]
 
@@ -72,9 +67,20 @@ export function SettingsModelPage() {
   }, [])
 
   const openAdd = () => {
+    setEditingProviderId(null)
     setDraftType('minimax_cn')
     setDraftKey('')
     setDraftModel(PRESETS.minimax_cn.models[0].value)
+    setTestHint(null)
+    setModalOpen(true)
+  }
+
+  const openEdit = (provider: ModelProvider) => {
+    const nextType = provider.providerType === 'minimax_cn' ? provider.providerType : 'minimax_cn'
+    setEditingProviderId(provider.id)
+    setDraftType(nextType)
+    setDraftKey(provider.apiKey)
+    setDraftModel(provider.model)
     setTestHint(null)
     setModalOpen(true)
   }
@@ -109,14 +115,16 @@ export function SettingsModelPage() {
     if (!key) return
 
     const entry: ModelProvider = {
-      id: newId(),
+      id: editingProviderId ?? newId(),
       providerType: draftType,
       apiKey: key,
       model: draftModel,
       baseUrl: preset.baseUrl,
     }
 
-    const nextProviders = [...config.providers, entry]
+    const nextProviders = editingProviderId
+      ? config.providers.map((p) => (p.id === editingProviderId ? entry : p))
+      : [...config.providers, entry]
     const nextDefault =
       config.defaultProviderId ?? (nextProviders.length === 1 ? entry.id : config.defaultProviderId)
 
@@ -124,6 +132,7 @@ export function SettingsModelPage() {
       defaultProviderId: nextDefault,
       providers: nextProviders,
     })
+    setEditingProviderId(null)
     setModalOpen(false)
   }
 
@@ -143,7 +152,7 @@ export function SettingsModelPage() {
 
   const providerLabel = useCallback(
     (p: ModelProvider) => {
-      const pt = p.providerType === 'deepseek' || p.providerType === 'minimax_cn' ? p.providerType : null
+      const pt = p.providerType === 'minimax_cn' ? p.providerType : null
       if (!pt) return p.providerType
       return t(`settings.model.provider.${pt}`)
     },
@@ -151,7 +160,7 @@ export function SettingsModelPage() {
   )
 
   const modelLabel = (p: ModelProvider) => {
-    const pt = p.providerType === 'deepseek' || p.providerType === 'minimax_cn' ? p.providerType : null
+    const pt = p.providerType === 'minimax_cn' ? p.providerType : null
     if (!pt) return p.model
     const found = PRESETS[pt].models.find((m) => m.value === p.model)
     return found?.label ?? p.model
@@ -159,7 +168,7 @@ export function SettingsModelPage() {
 
   const providerOptions = useMemo(
     () =>
-      (['minimax_cn', 'deepseek'] as ProviderType[]).map((value) => ({
+      (['minimax_cn'] as ProviderType[]).map((value) => ({
         value,
         label: t(`settings.model.provider.${value}`),
       })),
@@ -183,7 +192,6 @@ export function SettingsModelPage() {
       ) : (
         <ul className="grid gap-4 md:grid-cols-2">
           {config.providers.map((p) => {
-            const pt = p.providerType === 'deepseek' || p.providerType === 'minimax_cn' ? p.providerType : 'minimax_cn'
             const isDefault = config.defaultProviderId === p.id
             return (
               <li
@@ -191,7 +199,7 @@ export function SettingsModelPage() {
                 className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-md ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/5"
               >
                 <div className="flex gap-3">
-                  <ProviderLogo type={pt} />
+                  <ProviderLogo />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate text-lg font-bold text-slate-900 dark:text-slate-50">
@@ -229,6 +237,10 @@ export function SettingsModelPage() {
                     </dl>
 
                     <div className="mt-4 flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => openEdit(p)}>
+                        <Pencil className="mr-1 h-3.5 w-3.5" />
+                        {t('settings.model.edit')}
+                      </Button>
                       {!isDefault ? (
                         <Button type="button" variant="outline" size="sm" onClick={() => void setDefaultProvider(p.id)}>
                           {t('settings.model.setDefault')}
@@ -268,9 +280,11 @@ export function SettingsModelPage() {
             aria-labelledby="model-add-title"
           >
             <h3 id="model-add-title" className="text-lg font-semibold">
-              {t('settings.model.addTitle')}
+              {editingProviderId ? t('settings.model.editTitle') : t('settings.model.addTitle')}
             </h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('settings.model.addHint')}</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {editingProviderId ? t('settings.model.editHint') : t('settings.model.addHint')}
+            </p>
 
             <div className="mt-5 space-y-4">
               <div className="space-y-1.5">
@@ -352,7 +366,7 @@ export function SettingsModelPage() {
                 {t('settings.model.cancel')}
               </Button>
               <Button type="button" disabled={!draftKey.trim()} onClick={() => void saveDraft()}>
-                {t('settings.model.save')}
+                {editingProviderId ? t('settings.model.update') : t('settings.model.save')}
               </Button>
             </div>
           </div>

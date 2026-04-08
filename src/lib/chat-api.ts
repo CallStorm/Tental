@@ -53,6 +53,7 @@ export type StreamChatEvent = {
   thinkingDelta?: string
   contentDelta?: string
   message?: string
+  tool?: unknown
 }
 
 /**
@@ -62,6 +63,7 @@ export type StreamChatEvent = {
 export async function streamChat(options: {
   providerId?: string | null
   messages: ChatTurn[]
+  debug?: boolean
   onEvent: (e: StreamChatEvent) => void
 }): Promise<void> {
   let failed = false
@@ -78,8 +80,11 @@ export async function streamChat(options: {
       }
     })
     invoke('stream_chat', {
-      providerId: options.providerId ?? null,
-      messages: options.messages,
+      req: {
+        providerId: options.providerId ?? null,
+        messages: options.messages,
+        debug: !!options.debug,
+      },
       channel,
     }).catch((err) => {
       if (!failed) {

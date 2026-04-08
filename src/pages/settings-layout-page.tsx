@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 const settingsItems = [
   { to: '/settings/general', key: 'settings.nav.general' },
   { to: '/settings/model', key: 'settings.nav.model' },
+  { to: '/settings/agent', key: 'settings.nav.agent' },
   { to: '/settings/advanced', key: 'settings.nav.advanced' },
 ]
 

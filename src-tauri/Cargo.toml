@@ -27,3 +27,10 @@ dirs = "6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
+walkdir = "2.5.0"
+globset = "0.4.18"
+screenshots = "0.8.10"
+anyhow = "1.0.102"
+thiserror = "2.0.18"
+base64 = "0.22.1"
+chrono = "0.4.44"

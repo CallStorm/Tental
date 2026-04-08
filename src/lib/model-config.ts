@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export type ProviderType = 'minimax_cn' | 'deepseek'
+export type ProviderType = 'minimax_cn'
 
 export type ModelProvider = {
   id: string
@@ -25,14 +25,6 @@ export const PRESETS: Record<
     models: [
       { value: 'MiniMax-M2.7', label: 'MiniMax M2.7' },
       { value: 'MiniMax-M2.7-highspeed', label: 'MiniMax M2.7 Highspeed' },
-    ],
-  },
-  deepseek: {
-    title: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    models: [
-      { value: 'deepseek-chat', label: 'deepseek-chat' },
-      { value: 'deepseek-reasoner', label: 'deepseek-reasoner' },
     ],
   },
 }

@@ -21,8 +21,10 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Hammer,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { ChatMarkdown } from '@/components/chat-markdown'
 import {
   completeChat,
@@ -32,6 +34,7 @@ import {
   type ChatMessage,
   type ChatSession,
   type ChatStoreData,
+  type ChatTurn,
 } from '@/lib/chat-api'
 import { loadModelConfig, type ModelConfig } from '@/lib/model-config'
 import { cn } from '@/lib/utils'
@@ -62,6 +65,33 @@ function bumpSessionInStore(
 
 type SlashDef = { cmd: string; labelKey: string; descKey: string }
 
+type ToolCardData = {
+  kind: 'tool'
+  id: string
+  name: string
+  status: 'calling' | 'ok' | 'error'
+  input?: unknown
+  output?: unknown
+  error?: string
+  errorCode?: string
+}
+
+function isObject(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === 'object'
+}
+
+function parseToolCard(content: string): ToolCardData | null {
+  try {
+    const v = JSON.parse(content) as unknown
+    if (!isObject(v) || v.kind !== 'tool') return null
+    if (typeof v.id !== 'string' || typeof v.name !== 'string') return null
+    if (typeof v.status !== 'string') return null
+    return v as ToolCardData
+  } catch {
+    return null
+  }
+}
+
 export function ChatPage() {
   const { t } = useTranslation()
   const [store, setStore] = useState<ChatStoreData | null>(null)
@@ -73,6 +103,8 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [slashHighlight, setSlashHighlight] = useState(0)
+  const [debugEnabled, setDebugEnabled] = useState(false)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const copyText = useCallback(async (text: string) => {
@@ -94,12 +126,6 @@ export function ChatPage() {
         labelKey: 'chat.slash.compact',
         descKey: 'chat.slash.compact.desc',
       },
-      {
-        cmd: '/approve',
-        labelKey: 'chat.slash.approve',
-        descKey: 'chat.slash.approve.desc',
-      },
-      { cmd: '/deny', labelKey: 'chat.slash.deny', descKey: 'chat.slash.deny.desc' },
     ],
     [],
   )
@@ -129,6 +155,164 @@ export function ChatPage() {
     setStore(next)
     await saveChatStore(next)
   }, [])
+
+  const persistUpdate = useCallback(async (updater: (base: ChatStoreData) => ChatStoreData) => {
+    let next: ChatStoreData | null = null
+    setStore((base) => {
+      if (!base) return base
+      next = updater(base)
+      return next
+    })
+    if (next) {
+      await saveChatStore(next)
+      return next
+    }
+    return null
+  }, [])
+
+  const runTurnsWithToolLoop = useCallback(
+    async function runTurnsWithToolLoop(sid: string, pid: string, turns: ChatTurn[]): Promise<void> {
+      const astId = newId()
+      await persistUpdate((base) => {
+        const list = base.messages[sid] ?? []
+        const assistantPlaceholder: ChatMessage = {
+          id: astId,
+          role: 'assistant',
+          content: '',
+          createdAt: nowMs(),
+        }
+        const bumped = bumpSessionInStore(base, sid, {})
+        return {
+          ...bumped,
+          messages: { ...bumped.messages, [sid]: [...list, assistantPlaceholder] },
+        }
+      })
+
+      let thinkingAcc = ''
+      let contentAcc = ''
+      const toolState: {
+        toolCall: { id: string; name: string; input: unknown } | null
+        toolMessageById: Record<string, string>
+        toolResult:
+          | {
+              id: string
+              name: string
+              ok: boolean
+              output: unknown
+              error?: string | null
+              errorCode?: string | null
+            }
+          | null
+      } = {
+        toolCall: null,
+        toolMessageById: {},
+        toolResult: null,
+      }
+
+      await streamChat({
+        providerId: pid,
+        messages: turns,
+        debug: debugEnabled,
+        onEvent: (e) => {
+          if (e.event === 'debug_trace' && isObject(e.tool)) {
+            const stage = typeof e.tool.stage === 'string' ? e.tool.stage : 'trace'
+            const logs =
+              'messages' in e.tool
+                ? JSON.stringify((e.tool as Record<string, unknown>).messages, null, 2)
+                : JSON.stringify((e.tool as Record<string, unknown>).message ?? e.tool, null, 2)
+            setDebugLogs((base) => [...base, `[${stage}] ${logs}`].slice(-100))
+            return
+          }
+          if (e.event === 'delta') {
+            if (e.thinkingDelta) thinkingAcc += e.thinkingDelta
+            if (e.contentDelta) contentAcc += e.contentDelta
+            void persistUpdate((base) => {
+              const list = base.messages[sid] ?? []
+              const nextList = list.map((m) =>
+                m.id === astId
+                  ? {
+                      ...m,
+                      content: contentAcc,
+                      thinking: thinkingAcc.length > 0 ? thinkingAcc : undefined,
+                    }
+                  : m,
+              )
+              return { ...base, messages: { ...base.messages, [sid]: nextList } }
+            })
+            return
+          }
+
+          if (e.event === 'tool_call' && isObject(e.tool)) {
+            const id = typeof e.tool.id === 'string' ? e.tool.id : 'toolcall'
+            const name = typeof e.tool.name === 'string' ? e.tool.name : 'unknown'
+            const input = (e.tool as Record<string, unknown>).input
+            toolState.toolCall = { id, name, input }
+            const toolMsgId = newId()
+            toolState.toolMessageById[id] = toolMsgId
+
+            const card: ToolCardData = {
+              kind: 'tool',
+              id,
+              name,
+              status: 'calling',
+              input,
+            }
+            void persistUpdate((base) => {
+              const list = base.messages[sid] ?? []
+              const toolMsg: ChatMessage = {
+                id: toolMsgId,
+                role: 'tool',
+                content: JSON.stringify(card),
+                createdAt: nowMs(),
+              }
+              const assistantIdx = list.findIndex((m) => m.id === astId)
+              const nextList =
+                assistantIdx >= 0
+                  ? [...list.slice(0, assistantIdx), toolMsg, ...list.slice(assistantIdx)]
+                  : [...list, toolMsg]
+              return { ...base, messages: { ...base.messages, [sid]: nextList } }
+            })
+            return
+          }
+
+          if (e.event === 'tool_result' && isObject(e.tool)) {
+            toolState.toolResult = {
+              id: typeof e.tool.id === 'string' ? e.tool.id : toolState.toolCall?.id ?? 'toolcall',
+              name: typeof e.tool.name === 'string' ? e.tool.name : toolState.toolCall?.name ?? 'unknown',
+              ok: !!(e.tool as Record<string, unknown>).ok,
+              output: (e.tool as Record<string, unknown>).output,
+              error: typeof e.tool.error === 'string' ? e.tool.error : null,
+              errorCode: typeof e.tool.errorCode === 'string' ? e.tool.errorCode : null,
+            }
+            const card: ToolCardData = {
+              kind: 'tool',
+              id: toolState.toolResult.id,
+              name: toolState.toolResult.name,
+              status: toolState.toolResult.ok ? 'ok' : 'error',
+              input: toolState.toolCall?.input,
+              output: toolState.toolResult.output,
+              error: toolState.toolResult.error ?? undefined,
+              errorCode: toolState.toolResult.errorCode ?? undefined,
+            }
+            const toolMessageId = toolState.toolMessageById[toolState.toolResult.id]
+            void persistUpdate((base) => {
+              const nextList = (base.messages[sid] ?? []).map((m) => {
+                if (m.id !== toolMessageId) return m
+                return { ...m, role: 'tool', content: JSON.stringify(card) }
+              })
+              const bumped = bumpSessionInStore(base, sid, {})
+              return {
+                ...bumped,
+                messages: { ...bumped.messages, [sid]: nextList },
+              }
+            })
+            return
+          }
+        },
+      })
+    },
+    [debugEnabled, persistUpdate],
+  )
 
   useEffect(() => {
     void (async () => {
@@ -163,6 +347,11 @@ export function ChatPage() {
     return () => window.clearTimeout(tmr)
   }, [toast])
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem('chat.debug.enabled')
+    setDebugEnabled(saved === '1')
+  }, [])
+
   const messages = useMemo(() => {
     if (!store || !activeId) return []
     return store.messages[activeId] ?? []
@@ -195,6 +384,7 @@ export function ChatPage() {
     setHistoryOpen(false)
     setInput('')
     setError(null)
+    setDebugLogs([])
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [store, persist, t])
 
@@ -369,29 +559,6 @@ export function ChatPage() {
     setInput('')
   }, [activeId, store, replaceMessages, t])
 
-  const handleApproveDeny = useCallback(
-    async (kind: 'approve' | 'deny') => {
-      if (!activeSession?.pendingToolApproval) {
-        setToast(t('chat.toast.noPendingApproval'))
-        setInput('')
-        return
-      }
-      setToast(
-        kind === 'approve'
-          ? t('chat.toast.approveStub')
-          : t('chat.toast.denyStub'),
-      )
-      setInput('')
-      if (store && activeId) {
-        const next = bumpSessionInStore(store, activeId, {
-          pendingToolApproval: null,
-        })
-        await persist(next)
-      }
-    },
-    [activeSession, store, activeId, persist, t],
-  )
-
   const sendNormal = useCallback(
     async (text: string) => {
       const pid = ensureDefaultProvider()
@@ -410,16 +577,8 @@ export function ChatPage() {
       let s = await maybeSetTitleFromUser(sid, text, store)
       const prev = s.messages[sid] ?? []
       const afterUser = [...prev, userMsg]
-      const astId = newId()
-      const assistantPlaceholder: ChatMessage = {
-        id: astId,
-        role: 'assistant',
-        content: '',
-        createdAt: nowMs(),
-      }
-      const withAssistant = [...afterUser, assistantPlaceholder]
       s = bumpSessionInStore(s, sid, {})
-      s = { ...s, messages: { ...s.messages, [sid]: withAssistant } }
+      s = { ...s, messages: { ...s.messages, [sid]: afterUser } }
       await persist(s)
 
       const turns = afterUser.map((m) => ({
@@ -428,76 +587,15 @@ export function ChatPage() {
       }))
       setSending(true)
       setError(null)
-      let thinkingAcc = ''
-      let contentAcc = ''
-      const patchAssistantInBase = (base: ChatStoreData): ChatStoreData => {
-        const nextList = (base.messages[sid] ?? []).map((m) =>
-          m.id === astId
-            ? {
-                ...m,
-                content: contentAcc,
-                thinking:
-                  thinkingAcc.length > 0 ? thinkingAcc : undefined,
-              }
-            : m,
-        )
-        const bumped = bumpSessionInStore(base, sid, {})
-        const next: ChatStoreData = {
-          ...bumped,
-          messages: { ...bumped.messages, [sid]: nextList },
-        }
-        return next
-      }
       try {
-        await streamChat({
-          providerId: pid,
-          messages: turns,
-          onEvent: (e) => {
-            if (e.event !== 'delta') return
-            if (e.thinkingDelta) thinkingAcc += e.thinkingDelta
-            if (e.contentDelta) contentAcc += e.contentDelta
-            setStore((base) => {
-              if (!base) return base
-              return {
-                ...base,
-                messages: {
-                  ...base.messages,
-                  [sid]: (base.messages[sid] ?? []).map((m) =>
-                    m.id === astId
-                      ? {
-                          ...m,
-                          content: contentAcc,
-                          thinking:
-                            thinkingAcc.length > 0
-                              ? thinkingAcc
-                              : undefined,
-                        }
-                      : m,
-                  ),
-                },
-              }
-            })
-          },
-        })
-        setStore((base) => {
-          if (!base) return base
-          const next = patchAssistantInBase(base)
-          void saveChatStore(next)
-          return next
-        })
+        await runTurnsWithToolLoop(sid, pid, turns)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
-        setStore((base) => {
-          if (!base) return base
-          const next = patchAssistantInBase(base)
-          void saveChatStore(next)
-          return next
-        })
       } finally {
         setSending(false)
       }
     },
-    [activeId, store, ensureDefaultProvider, maybeSetTitleFromUser, persist, t],
+    [activeId, store, ensureDefaultProvider, maybeSetTitleFromUser, persist, runTurnsWithToolLoop, t],
   )
 
   const onSubmit = useCallback(async () => {
@@ -508,14 +606,6 @@ export function ChatPage() {
     const first = raw.split('\n')[0]?.trim() ?? ''
     if (first.startsWith('/clear')) {
       await runClear()
-      return
-    }
-    if (first.startsWith('/approve')) {
-      void handleApproveDeny('approve')
-      return
-    }
-    if (first.startsWith('/deny')) {
-      void handleApproveDeny('deny')
       return
     }
     if (first.startsWith('/compact')) {
@@ -533,7 +623,6 @@ export function ChatPage() {
     runClear,
     runCompact,
     sendNormal,
-    handleApproveDeny,
   ])
 
   const onPickSlash = useCallback(
@@ -542,7 +631,7 @@ export function ChatPage() {
         void runClear()
         return
       }
-      if (cmd === '/approve' || cmd === '/deny' || cmd === '/compact') {
+      if (cmd === '/compact') {
         setInput(`${cmd} `)
         requestAnimationFrame(() => textareaRef.current?.focus())
       }
@@ -591,10 +680,15 @@ export function ChatPage() {
     ],
   )
 
-  const fillSuggestion = useCallback((text: string) => {
-    setInput(text)
-    requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [])
+  const fillSuggestion = useCallback(
+    async (text: string) => {
+      const next = text.trim()
+      if (!next || sending) return
+      setInput('')
+      await sendNormal(next)
+    },
+    [sendNormal, sending],
+  )
 
   if (!store || !activeId || !activeSession) {
     return (
@@ -617,6 +711,20 @@ export function ChatPage() {
           {activeSession.title}
         </h1>
         <div className="flex items-center gap-1">
+          <div className="mr-2 flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 dark:border-slate-700">
+            <span className="text-xs text-slate-600 dark:text-slate-300">Debug</span>
+            <Switch
+              checked={debugEnabled}
+              onChange={(event) => {
+                const next = event.target.checked
+                setDebugEnabled(next)
+                if (!next) {
+                  setDebugLogs([])
+                }
+                window.localStorage.setItem('chat.debug.enabled', next ? '1' : '0')
+              }}
+            />
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -639,6 +747,17 @@ export function ChatPage() {
           </Button>
         </div>
       </header>
+
+      {debugEnabled ? (
+        <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+          <summary className="cursor-pointer text-sm font-medium">
+            API Messages Debug ({debugLogs.length})
+          </summary>
+          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-xs dark:bg-slate-950">
+            {debugLogs.join('\n\n') || 'No debug logs yet.'}
+          </pre>
+        </details>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col">
         {messages.length === 0 ? (
@@ -689,11 +808,15 @@ export function ChatPage() {
                   className={cn(
                     m.role === 'assistant'
                       ? 'w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
+                      : m.role === 'tool'
+                        ? 'w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
                       : 'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
                     m.role === 'user'
                       ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                       : m.role === 'system'
                         ? 'border border-amber-200/80 bg-amber-50 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100'
+                        : m.role === 'tool'
+                          ? 'border border-indigo-200/80 bg-indigo-50 text-indigo-950 dark:border-indigo-900/50 dark:bg-indigo-950/30 dark:text-indigo-100'
                         : 'border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
                   )}
                 >
@@ -702,7 +825,9 @@ export function ChatPage() {
                       ? t('chat.role.user')
                       : m.role === 'assistant'
                         ? t('chat.role.assistant')
-                        : 'System'}
+                        : m.role === 'tool'
+                          ? 'Tool'
+                          : 'System'}
                   </span>
                   {m.role === 'assistant' ? (
                     <>
@@ -751,6 +876,61 @@ export function ChatPage() {
                         </button>
                       </div>
                     </>
+                  ) : m.role === 'tool' ? (
+                    (() => {
+                      const card = parseToolCard(m.content)
+                      if (!card) {
+                        return <p className="whitespace-pre-wrap">{m.content}</p>
+                      }
+                      const badge =
+                        card.status === 'calling'
+                            ? '执行中'
+                          : card.status === 'ok'
+                              ? '成功'
+                              : '失败'
+                      const badgeCls =
+                        card.status === 'ok'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                          : card.status === 'calling'
+                              ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                              : 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+
+                      return (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Hammer className="h-3.5 w-3.5" />
+                            <span className="font-semibold">{card.name}</span>
+                            <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', badgeCls)}>
+                              {badge}
+                            </span>
+                            <span className="rounded-full bg-white/60 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-black/10 dark:text-slate-200">
+                              {card.id}
+                            </span>
+                          </div>
+
+                          <details className="group rounded-xl border border-indigo-200/70 bg-white/50 px-3 py-2 dark:border-indigo-900/40 dark:bg-black/10">
+                            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-indigo-700 outline-none dark:text-indigo-300 [&::-webkit-details-marker]:hidden">
+                              <span>输入/输出</span>
+                              <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-70 transition-transform group-open:-rotate-180" />
+                            </summary>
+                            <div className="mt-2 space-y-2 border-t border-indigo-200/60 pt-2 text-xs dark:border-indigo-900/40">
+                              <div>
+                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">Input</div>
+                                <pre className="overflow-x-auto rounded-lg bg-white/70 p-2 font-mono text-[11px] text-slate-800 dark:bg-slate-950/40 dark:text-slate-100">
+                                  {JSON.stringify(card.input ?? null, null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">Output</div>
+                                <pre className="overflow-x-auto rounded-lg bg-white/70 p-2 font-mono text-[11px] text-slate-800 dark:bg-slate-950/40 dark:text-slate-100">
+                                  {JSON.stringify(card.output ?? null, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+                          </details>
+                        </div>
+                      )
+                    })()
                   ) : (
                     <p className="whitespace-pre-wrap">{m.content}</p>
                   )}

@@ -3,11 +3,29 @@ import { invoke } from '@tauri-apps/api/core'
 export type AppConfig = {
   theme: 'light' | 'dark' | 'system'
   language: 'zh' | 'en'
+  agent: AgentConfig
+}
+
+export type AgentConfig = {
+  language: 'zh' | 'en'
+  maxIterations: number
+  maxContextTokens: number
+  autoRetryEnabled: boolean
+  maxRetryCount: number
+}
+
+export const defaultAgentConfig: AgentConfig = {
+  language: 'zh',
+  maxIterations: 6,
+  maxContextTokens: 12000,
+  autoRetryEnabled: true,
+  maxRetryCount: 2,
 }
 
 export const defaultConfig: AppConfig = {
   theme: 'system',
   language: 'zh',
+  agent: defaultAgentConfig,
 }
 
 export async function loadConfig(): Promise<AppConfig> {
@@ -16,6 +34,25 @@ export async function loadConfig(): Promise<AppConfig> {
     return {
       theme: config.theme ?? defaultConfig.theme,
       language: config.language ?? defaultConfig.language,
+      agent: {
+        language: config.agent?.language ?? defaultAgentConfig.language,
+        maxIterations:
+          typeof config.agent?.maxIterations === 'number'
+            ? config.agent.maxIterations
+            : defaultAgentConfig.maxIterations,
+        maxContextTokens:
+          typeof config.agent?.maxContextTokens === 'number'
+            ? config.agent.maxContextTokens
+            : defaultAgentConfig.maxContextTokens,
+        autoRetryEnabled:
+          typeof config.agent?.autoRetryEnabled === 'boolean'
+            ? config.agent.autoRetryEnabled
+            : defaultAgentConfig.autoRetryEnabled,
+        maxRetryCount:
+          typeof config.agent?.maxRetryCount === 'number'
+            ? config.agent.maxRetryCount
+            : defaultAgentConfig.maxRetryCount,
+      },
     }
   } catch {
     return defaultConfig

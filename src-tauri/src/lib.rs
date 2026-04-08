@@ -1,17 +1,30 @@
 mod chat_store;
 mod llm;
+mod tools;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
 pub use chat_store::{ChatMessage, ChatSession, ChatStore};
+pub use tools::{ToolMeta, ToolSecurityConfig};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct AppConfig {
   theme: String,
   language: String,
+  agent: AgentConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default, rename_all = "camelCase")]
+struct AgentConfig {
+  language: String,
+  max_iterations: usize,
+  max_context_tokens: usize,
+  auto_retry_enabled: bool,
+  max_retry_count: usize,
 }
 
 impl Default for AppConfig {
@@ -19,6 +32,19 @@ impl Default for AppConfig {
     Self {
       theme: "system".to_string(),
       language: "zh".to_string(),
+      agent: AgentConfig::default(),
+    }
+  }
+}
+
+impl Default for AgentConfig {
+  fn default() -> Self {
+    Self {
+      language: "zh".to_string(),
+      max_iterations: 6,
+      max_context_tokens: 12_000,
+      auto_retry_enabled: true,
+      max_retry_count: 2,
     }
   }
 }
@@ -128,6 +154,45 @@ fn save_chat_store(store: ChatStore) -> Result<(), String> {
   chat_store::save_chat_store_disk(&store)
 }
 
+#[tauri::command]
+fn list_tools() -> Result<Vec<ToolMeta>, String> {
+  tools::list_tools()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetToolEnabledRequest {
+  tool_id: String,
+  enabled: bool,
+}
+
+#[tauri::command]
+fn set_tool_enabled(req: SetToolEnabledRequest) -> Result<(), String> {
+  tools::set_tool_enabled(&req.tool_id, req.enabled)
+}
+
+#[tauri::command]
+fn load_tool_security() -> Result<ToolSecurityConfig, String> {
+  tools::load_security_config()
+}
+
+#[tauri::command]
+fn save_tool_security(config: ToolSecurityConfig) -> Result<(), String> {
+  tools::save_security_config(&config)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunToolRequest {
+  name: String,
+  input: serde_json::Value,
+}
+
+#[tauri::command]
+fn run_tool(req: RunToolRequest) -> Result<tools::RunToolResponse, String> {
+  tools::run_tool(&req.name, req.input)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatTurn {
@@ -141,6 +206,15 @@ struct CompleteChatRequest {
   /// When null, uses `ModelConfig.default_provider_id`.
   provider_id: Option<String>,
   messages: Vec<ChatTurn>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamChatRequest {
+  provider_id: Option<String>,
+  messages: Vec<ChatTurn>,
+  #[serde(default)]
+  debug: bool,
 }
 
 fn resolve_provider<'a>(
@@ -158,8 +232,139 @@ fn resolve_provider<'a>(
     .ok_or_else(|| format!("找不到供应商: {}", id))
 }
 
+fn anthropic_tool_input_schema(tool_id: &str) -> serde_json::Value {
+  match tool_id {
+    "bash" => serde_json::json!({
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "Command to execute." },
+        "cwd": { "type": "string", "description": "Working directory (optional)." },
+        "timeoutMs": { "type": "integer", "minimum": 1, "description": "Timeout in milliseconds (optional)." }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    }),
+    "read_file" => serde_json::json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative file path." },
+        "startLine": { "type": "integer", "minimum": 1, "description": "1-based start line (optional)." },
+        "maxLines": { "type": "integer", "minimum": 1, "description": "Maximum lines to return (optional)." }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    }),
+    "write_file" => serde_json::json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative file path." },
+        "content": { "type": "string", "description": "Full file content to write." }
+      },
+      "required": ["path", "content"],
+      "additionalProperties": false
+    }),
+    "edit_file" => serde_json::json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative file path." },
+        "find": { "type": "string", "description": "String to find." },
+        "replace": { "type": "string", "description": "Replacement string." },
+        "all": { "type": "boolean", "description": "Replace all matches if true, otherwise first match." }
+      },
+      "required": ["path", "find", "replace"],
+      "additionalProperties": false
+    }),
+    "get_current_time" => serde_json::json!({
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }),
+    _ => serde_json::json!({
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    }),
+  }
+}
+
+fn estimate_tokens(content: &str) -> usize {
+  // Lightweight estimate: mixed CJK/ASCII average around 2 chars/token.
+  let chars = content.chars().count();
+  (chars / 2).max(1)
+}
+
+fn trim_turns_for_context(pairs: &[(String, String)], max_context_tokens: usize) -> Vec<(String, String)> {
+  if pairs.is_empty() {
+    return vec![];
+  }
+  let mut system_turns: Vec<(String, String)> = Vec::new();
+  let mut others: Vec<(String, String)> = Vec::new();
+  for (r, c) in pairs {
+    if r == "system" {
+      system_turns.push((r.clone(), c.clone()));
+    } else {
+      others.push((r.clone(), c.clone()));
+    }
+  }
+
+  let mut out = system_turns;
+  let used = out
+    .iter()
+    .map(|(_, c)| estimate_tokens(c))
+    .sum::<usize>();
+  let budget = max_context_tokens.max(1000);
+  if used >= budget {
+    return out;
+  }
+  let mut remain = budget - used;
+  let mut kept_rev: Vec<(String, String)> = Vec::new();
+  for (r, c) in others.into_iter().rev() {
+    let t = estimate_tokens(&c);
+    if t <= remain || kept_rev.is_empty() {
+      remain = remain.saturating_sub(t);
+      kept_rev.push((r, c));
+    } else {
+      break;
+    }
+  }
+  kept_rev.reverse();
+  out.extend(kept_rev);
+  out
+}
+
+fn call_complete_with_retry(
+  provider: &ModelProvider,
+  messages: &[(String, String)],
+  cfg: &AgentConfig,
+) -> Result<String, String> {
+  let mut attempts = 0usize;
+  let max_tries = if cfg.auto_retry_enabled {
+    cfg.max_retry_count.saturating_add(1)
+  } else {
+    1
+  };
+  loop {
+    let printable = serde_json::to_string_pretty(messages).unwrap_or_else(|_| "<serialize_failed>".to_string());
+    log::info!("[LLM][complete_chat][request] {}", printable);
+    match llm::complete_chat(provider, messages) {
+      Ok(v) => {
+        log::info!("[LLM][complete_chat][response] {}", v);
+        return Ok(v);
+      }
+      Err(e) => {
+        log::error!("[LLM][complete_chat][error] {}", e);
+        attempts += 1;
+        if attempts >= max_tries {
+          return Err(e);
+        }
+      }
+    }
+  }
+}
+
 #[tauri::command]
 fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
+  let app_config = load_config()?;
   let model_config = load_model_config()?;
   let provider = resolve_provider(&model_config, req.provider_id.as_deref())?;
   let pairs: Vec<(String, String)> = req
@@ -167,25 +372,202 @@ fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
     .into_iter()
     .map(|m| (m.role, m.content))
     .collect();
-  llm::complete_chat(provider, &pairs)
+  let trimmed = trim_turns_for_context(&pairs, app_config.agent.max_context_tokens);
+  let printable = serde_json::to_string_pretty(&trimmed).unwrap_or_else(|_| "<serialize_failed>".to_string());
+  log::info!("[LLM][complete_chat_cmd][trimmed_messages] {}", printable);
+  call_complete_with_retry(provider, &trimmed, &app_config.agent)
 }
 
 #[tauri::command]
 async fn stream_chat(
-  provider_id: Option<String>,
-  messages: Vec<ChatTurn>,
+  req: StreamChatRequest,
   channel: tauri::ipc::Channel<llm::StreamChatPayload>,
 ) -> Result<(), String> {
+  let app_config = load_config()?;
   let model_config = load_model_config()?;
-  let provider = resolve_provider(&model_config, provider_id.as_deref())?.clone();
-  let pairs: Vec<(String, String)> = messages
+  let provider = resolve_provider(&model_config, req.provider_id.as_deref())?.clone();
+  let pairs: Vec<(String, String)> = req
+    .messages
     .into_iter()
     .map(|m| (m.role, m.content))
     .collect();
-  llm::stream_chat(&provider, &pairs, move |p| {
-    channel.send(p).map_err(|e| e.to_string())
-  })
-  .await
+  let tool_list = tools::list_tools()?;
+  let enabled_tools: Vec<ToolMeta> = tool_list.into_iter().filter(|t| t.enabled).collect();
+
+  let mut system_parts: Vec<String> = Vec::new();
+  system_parts.push(if app_config.agent.language == "en" {
+    "Respond in English.".to_string()
+  } else {
+    "请使用中文回复。".to_string()
+  });
+  let mut anthropic_messages: Vec<serde_json::Value> = Vec::new();
+  for (role, content) in trim_turns_for_context(&pairs, app_config.agent.max_context_tokens) {
+    let c = content.trim();
+    if c.is_empty() {
+      continue;
+    }
+    if role == "system" {
+      system_parts.push(c.to_string());
+      continue;
+    }
+    if role != "user" && role != "assistant" {
+      continue;
+    }
+    anthropic_messages.push(serde_json::json!({
+      "role": role,
+      "content": [{"type":"text","text": c}]
+    }));
+  }
+
+  let tool_defs: Vec<serde_json::Value> = enabled_tools
+    .iter()
+    .map(|t| {
+      serde_json::json!({
+        "name": t.id,
+        "description": t.description,
+        "input_schema": anthropic_tool_input_schema(&t.id)
+      })
+    })
+    .collect();
+
+  let max_loops = app_config.agent.max_iterations.max(1);
+  for loop_idx in 0..max_loops {
+    let body = serde_json::json!({
+      "model": provider.model,
+      "max_tokens": 4096,
+      "system": system_parts.join("\n"),
+      "tools": tool_defs,
+      "messages": anthropic_messages,
+    });
+    let body_print = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "<serialize_failed>".to_string());
+    log::info!(
+      "[LLM][stream_chat][loop:{}][request_messages] {}",
+      loop_idx + 1,
+      body_print
+    );
+    if req.debug {
+      channel
+        .send(llm::StreamChatPayload::tool_event(
+          "debug_trace",
+          serde_json::json!({"stage":"messages_input","message": body}),
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+
+    let provider_for_call = provider.clone();
+    let body_for_call = body.clone();
+    let response = tokio::task::spawn_blocking(move || llm::anthropic_messages_create(&provider_for_call, &body_for_call))
+      .await
+      .map_err(|e| e.to_string())??;
+    let response_print =
+      serde_json::to_string_pretty(&response).unwrap_or_else(|_| "<serialize_failed>".to_string());
+    log::info!(
+      "[LLM][stream_chat][loop:{}][response] {}",
+      loop_idx + 1,
+      response_print
+    );
+    if req.debug {
+      channel
+        .send(llm::StreamChatPayload::tool_event(
+          "debug_trace",
+          serde_json::json!({"stage":"messages_output","message": response}),
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+
+    let blocks = response
+      .get("content")
+      .and_then(|x| x.as_array())
+      .cloned()
+      .unwrap_or_default();
+    anthropic_messages.push(serde_json::json!({
+      "role":"assistant",
+      "content": blocks.clone()
+    }));
+
+    let mut tool_results: Vec<serde_json::Value> = Vec::new();
+    for block in &blocks {
+      if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+        continue;
+      }
+      let id = block
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("toolcall")
+        .to_string();
+      let name = block
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+      let input = block
+        .get("input")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+      channel
+        .send(llm::StreamChatPayload::tool_event(
+          "tool_call",
+          serde_json::json!({"id": id, "name": name, "input": input}),
+        ))
+        .map_err(|e| e.to_string())?;
+      let input_print = serde_json::to_string(&input).unwrap_or_else(|_| "<serialize_failed>".to_string());
+      log::info!(
+        "[LLM][stream_chat][tool_call] id={} name={} input={}",
+        id,
+        name,
+        input_print
+      );
+      let res = tools::run_tool(&name, input)?;
+      let payload = serde_json::json!({
+        "id": id,
+        "name": name,
+        "ok": res.ok,
+        "output": res.output,
+        "error": res.error,
+        "errorCode": res.error_code,
+      });
+      channel
+        .send(llm::StreamChatPayload::tool_event("tool_result", payload.clone()))
+        .map_err(|e| e.to_string())?;
+      let payload_print = serde_json::to_string(&payload).unwrap_or_else(|_| "<serialize_failed>".to_string());
+      log::info!("[LLM][stream_chat][tool_result] {}", payload_print);
+      tool_results.push(serde_json::json!({
+        "type":"tool_result",
+        "tool_use_id": id,
+        "content": payload.to_string()
+      }));
+    }
+
+    if !tool_results.is_empty() {
+      anthropic_messages.push(serde_json::json!({
+        "role":"user",
+        "content": tool_results
+      }));
+      continue;
+    }
+
+    let mut final_text = String::new();
+    for block in &blocks {
+      if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+        if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+          final_text.push_str(t);
+        }
+      }
+    }
+    if !final_text.is_empty() {
+      log::info!("[LLM][stream_chat][final_text] {}", final_text);
+      channel
+        .send(llm::StreamChatPayload::delta(None, Some(final_text)))
+        .map_err(|e| e.to_string())?;
+    }
+    channel.send(llm::StreamChatPayload::done()).map_err(|e| e.to_string())?;
+    return Ok(());
+  }
+
+  channel
+    .send(llm::StreamChatPayload::error("tool loop exceeded max iterations".to_string()))
+    .map_err(|e| e.to_string())?;
+  channel.send(llm::StreamChatPayload::done()).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -210,6 +592,11 @@ pub fn run() {
       test_model_endpoint,
       load_chat_store,
       save_chat_store,
+      list_tools,
+      set_tool_enabled,
+      load_tool_security,
+      save_tool_security,
+      run_tool,
       complete_chat,
       stream_chat,
     ])
