@@ -3,6 +3,7 @@ import { AppShell } from '@/components/layout/app-shell'
 import { ComingSoonPage } from '@/pages/coming-soon-page'
 import { SettingsGeneralPage } from '@/pages/settings-general-page'
 import { SettingsLayoutPage } from '@/pages/settings-layout-page'
+import { SettingsModelPage } from '@/pages/settings-model-page'
 import { SettingsPlaceholderPage } from '@/pages/settings-placeholder-page'
 
 function App() {
@@ -21,10 +22,7 @@ function App() {
         <Route path="/settings" element={<SettingsLayoutPage />}>
           <Route index element={<Navigate to="/settings/general" replace />} />
           <Route path="general" element={<SettingsGeneralPage />} />
-          <Route
-            path="model"
-            element={<SettingsPlaceholderPage title="模型设置" />}
-          />
+          <Route path="model" element={<SettingsModelPage />} />
           <Route
             path="advanced"
             element={<SettingsPlaceholderPage title="高级设置" />}
