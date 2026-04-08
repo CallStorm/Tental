@@ -66,6 +66,7 @@
   "chat.slash.deny.desc": "拒绝待执行的工具操作",
   "chat.role.user": "你",
   "chat.role.assistant": "助手",
+  "chat.thinking.label": "思考",
   "chat.compact.systemPrefix": "【对话摘要】",
   "chat.compact.prompt": "请根据以下对话生成简洁的中文摘要，便于后续在较短上下文中继续交流。只输出摘要正文，不要多余说明。",
   "chat.compact.noteLine": "附加说明",

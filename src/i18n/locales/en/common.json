@@ -66,6 +66,7 @@
   "chat.slash.deny.desc": "Reject pending tool action",
   "chat.role.user": "You",
   "chat.role.assistant": "Assistant",
+  "chat.thinking.label": "Thinking",
   "chat.compact.systemPrefix": "[Summary]",
   "chat.compact.prompt": "Summarize the following dialogue in concise English (or match the dialogue language) for continued context. Output only the summary.",
   "chat.compact.noteLine": "Additional note",

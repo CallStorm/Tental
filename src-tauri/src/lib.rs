@@ -170,6 +170,24 @@ fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
   llm::complete_chat(provider, &pairs)
 }
 
+#[tauri::command]
+async fn stream_chat(
+  provider_id: Option<String>,
+  messages: Vec<ChatTurn>,
+  channel: tauri::ipc::Channel<llm::StreamChatPayload>,
+) -> Result<(), String> {
+  let model_config = load_model_config()?;
+  let provider = resolve_provider(&model_config, provider_id.as_deref())?.clone();
+  let pairs: Vec<(String, String)> = messages
+    .into_iter()
+    .map(|m| (m.role, m.content))
+    .collect();
+  llm::stream_chat(&provider, &pairs, move |p| {
+    channel.send(p).map_err(|e| e.to_string())
+  })
+  .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -193,6 +211,7 @@ pub fn run() {
       load_chat_store,
       save_chat_store,
       complete_chat,
+      stream_chat,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

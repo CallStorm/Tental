@@ -8,7 +8,9 @@ import {
 import { useTranslation } from 'react-i18next'
 import i18n from '@/i18n'
 import {
+  Copy,
   History,
+  Lightbulb,
   Loader2,
   MessageSquarePlus,
   Mic,
@@ -17,13 +19,16 @@ import {
   Sparkles,
   Trash2,
   ArrowUp,
+  ChevronDown,
   ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ChatMarkdown } from '@/components/chat-markdown'
 import {
   completeChat,
   loadChatStore,
   saveChatStore,
+  streamChat,
   type ChatMessage,
   type ChatSession,
   type ChatStoreData,
@@ -69,6 +74,17 @@ export function ChatPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [slashHighlight, setSlashHighlight] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const copyText = useCallback(async (text: string) => {
+    const t = text.trim()
+    if (!t) return
+    try {
+      await navigator.clipboard.writeText(t)
+      setToast('Copied')
+    } catch {
+      // no-op
+    }
+  }, [])
 
   const slashCommands: SlashDef[] = useMemo(
     () => [
@@ -394,8 +410,16 @@ export function ChatPage() {
       let s = await maybeSetTitleFromUser(sid, text, store)
       const prev = s.messages[sid] ?? []
       const afterUser = [...prev, userMsg]
+      const astId = newId()
+      const assistantPlaceholder: ChatMessage = {
+        id: astId,
+        role: 'assistant',
+        content: '',
+        createdAt: nowMs(),
+      }
+      const withAssistant = [...afterUser, assistantPlaceholder]
       s = bumpSessionInStore(s, sid, {})
-      s = { ...s, messages: { ...s.messages, [sid]: afterUser } }
+      s = { ...s, messages: { ...s.messages, [sid]: withAssistant } }
       await persist(s)
 
       const turns = afterUser.map((m) => ({
@@ -404,23 +428,71 @@ export function ChatPage() {
       }))
       setSending(true)
       setError(null)
+      let thinkingAcc = ''
+      let contentAcc = ''
+      const patchAssistantInBase = (base: ChatStoreData): ChatStoreData => {
+        const nextList = (base.messages[sid] ?? []).map((m) =>
+          m.id === astId
+            ? {
+                ...m,
+                content: contentAcc,
+                thinking:
+                  thinkingAcc.length > 0 ? thinkingAcc : undefined,
+              }
+            : m,
+        )
+        const bumped = bumpSessionInStore(base, sid, {})
+        const next: ChatStoreData = {
+          ...bumped,
+          messages: { ...bumped.messages, [sid]: nextList },
+        }
+        return next
+      }
       try {
-        const assistantText = await completeChat({
+        await streamChat({
           providerId: pid,
           messages: turns,
+          onEvent: (e) => {
+            if (e.event !== 'delta') return
+            if (e.thinkingDelta) thinkingAcc += e.thinkingDelta
+            if (e.contentDelta) contentAcc += e.contentDelta
+            setStore((base) => {
+              if (!base) return base
+              return {
+                ...base,
+                messages: {
+                  ...base.messages,
+                  [sid]: (base.messages[sid] ?? []).map((m) =>
+                    m.id === astId
+                      ? {
+                          ...m,
+                          content: contentAcc,
+                          thinking:
+                            thinkingAcc.length > 0
+                              ? thinkingAcc
+                              : undefined,
+                        }
+                      : m,
+                  ),
+                },
+              }
+            })
+          },
         })
-        const ast: ChatMessage = {
-          id: newId(),
-          role: 'assistant',
-          content: assistantText,
-          createdAt: nowMs(),
-        }
-        const afterAst = [...afterUser, ast]
-        s = bumpSessionInStore(s, sid, {})
-        s = { ...s, messages: { ...s.messages, [sid]: afterAst } }
-        await persist(s)
+        setStore((base) => {
+          if (!base) return base
+          const next = patchAssistantInBase(base)
+          void saveChatStore(next)
+          return next
+        })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
+        setStore((base) => {
+          if (!base) return base
+          const next = patchAssistantInBase(base)
+          void saveChatStore(next)
+          return next
+        })
       } finally {
         setSending(false)
       }
@@ -630,11 +702,61 @@ export function ChatPage() {
                         ? t('chat.role.assistant')
                         : 'System'}
                   </span>
-                  <p className="whitespace-pre-wrap">{m.content}</p>
+                  {m.role === 'assistant' ? (
+                    <>
+                      <div className="mb-1 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyText(
+                              [
+                                m.thinking ? `# ${t('chat.thinking.label')}\n${m.thinking}\n` : '',
+                                m.content,
+                              ]
+                                .filter(Boolean)
+                                .join('\n'),
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                          aria-label="Copy"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {m.thinking ? (
+                        <details
+                          className="group mb-3 rounded-xl border border-slate-200/90 bg-slate-50 px-3 py-2 dark:border-slate-600/60 dark:bg-slate-800/50"
+                        >
+                          <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-slate-500 outline-none dark:text-slate-400 [&::-webkit-details-marker]:hidden">
+                            <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+                            <span>{t('chat.thinking.label')}</span>
+                            <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-60 transition-transform group-open:-rotate-180" />
+                          </summary>
+                          <div className="mt-2 border-t border-slate-200/70 pt-2 text-slate-600 dark:border-slate-600/60 dark:text-slate-400">
+                            <ChatMarkdown text={m.thinking} />
+                          </div>
+                        </details>
+                      ) : null}
+                      {m.content.trim() === '' &&
+                      !(m.thinking && m.thinking.length > 0) &&
+                      sending ? (
+                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                          <span>{t('chat.sending')}</span>
+                        </div>
+                      ) : (
+                        <ChatMarkdown text={m.content} />
+                      )}
+                    </>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                  )}
                 </div>
               </div>
             ))}
-            {sending ? (
+            {sending &&
+            (!messages.length ||
+              messages[messages.length - 1]?.role !== 'assistant') ? (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900">
                   <Loader2 className="h-4 w-4 animate-spin" />

@@ -26,6 +26,8 @@ pub struct ChatMessage {
   pub role: String,
   pub content: String,
   pub created_at: i64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
