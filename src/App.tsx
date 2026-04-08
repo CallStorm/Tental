@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/app-shell'
+import { ChatPage } from '@/pages/chat-page'
 import { ComingSoonPage } from '@/pages/coming-soon-page'
 import { SettingsGeneralPage } from '@/pages/settings-general-page'
 import { SettingsLayoutPage } from '@/pages/settings-layout-page'
@@ -11,7 +12,7 @@ function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to="/chat" replace />} />
-        <Route path="/chat" element={<ComingSoonPage title="聊天" />} />
+        <Route path="/chat" element={<ChatPage />} />
         <Route path="/knowledge" element={<ComingSoonPage title="知识库" />} />
         <Route path="/workflow" element={<ComingSoonPage title="工作流" />} />
         <Route path="/tasks" element={<ComingSoonPage title="定时任务" />} />

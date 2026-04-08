@@ -1,8 +1,11 @@
+mod chat_store;
+mod llm;
+
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
+
+pub use chat_store::{ChatMessage, ChatSession, ChatStore};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,7 +40,7 @@ pub struct ModelConfig {
   pub providers: Vec<ModelProvider>,
 }
 
-fn get_tental_dir_path() -> Result<PathBuf, String> {
+pub(crate) fn get_tental_dir_path() -> Result<PathBuf, String> {
   let home = dirs::home_dir().ok_or("Cannot resolve user home directory")?;
   let app_dir = home.join(".tental");
   fs::create_dir_all(&app_dir).map_err(|err| err.to_string())?;
@@ -93,9 +96,6 @@ fn save_model_config(config: ModelConfig) -> Result<(), String> {
   fs::write(path, content).map_err(|err| err.to_string())
 }
 
-/// 1x1 transparent PNG (base64) for lightweight multimodal probe.
-const TINY_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TestModelRequest {
@@ -107,154 +107,67 @@ struct TestModelRequest {
   test_kind: String,
 }
 
-fn http_client() -> Result<reqwest::blocking::Client, String> {
-  reqwest::blocking::Client::builder()
-    .timeout(Duration::from_secs(45))
-    .build()
-    .map_err(|e| e.to_string())
-}
-
-fn summarize_api_error(status: reqwest::StatusCode, body: &str) -> String {
-  if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-    if let Some(msg) = v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
-      return format!("HTTP {} — {}", status, msg);
-    }
-    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
-      return format!("HTTP {} — {}", status, msg);
-    }
-  }
-  let trimmed: String = body.chars().take(500).collect();
-  if trimmed.is_empty() {
-    format!("HTTP {}", status)
-  } else {
-    format!("HTTP {} — {}", status, trimmed)
-  }
-}
-
-fn extract_anthropic_reply(text: &str) -> Option<String> {
-  let v: serde_json::Value = serde_json::from_str(text).ok()?;
-  let content = v.get("content")?.as_array()?;
-  for block in content {
-    if let Some(t) = block.get("text").and_then(|x| x.as_str()) {
-      let s = t.trim();
-      if !s.is_empty() {
-        return Some(s.chars().take(120).collect());
-      }
-    }
-  }
-  None
-}
-
-fn extract_openai_reply(text: &str) -> Option<String> {
-  let v: serde_json::Value = serde_json::from_str(text).ok()?;
-  v.get("choices")?
-    .get(0)?
-    .get("message")?
-    .get("content")?
-    .as_str()
-    .map(|s| s.trim().chars().take(120).collect())
+#[tauri::command]
+fn test_model_endpoint(req: TestModelRequest) -> Result<String, String> {
+  llm::run_test_model_endpoint(llm::TestModelInput {
+    provider_type: req.provider_type.as_str(),
+    base_url: req.base_url.as_str(),
+    api_key: req.api_key.as_str(),
+    model: req.model.as_str(),
+    test_kind: req.test_kind.as_str(),
+  })
 }
 
 #[tauri::command]
-fn test_model_endpoint(req: TestModelRequest) -> Result<String, String> {
-  let client = http_client()?;
-  let key = req.api_key.trim();
-  if key.is_empty() {
-    return Err("请填写 API 密钥".to_string());
-  }
+fn load_chat_store() -> Result<ChatStore, String> {
+  chat_store::load_chat_store_disk()
+}
 
-  match req.provider_type.as_str() {
-    "minimax_cn" => {
-      let url = format!(
-        "{}/v1/messages",
-        req.base_url.trim_end_matches('/')
-      );
-      let body = if req.test_kind == "multimodal" {
-        json!({
-          "model": req.model,
-          "max_tokens": 32,
-          "messages": [{
-            "role": "user",
-            "content": [
-              {"type": "text", "text": "请用一句话描述这张图（若无法识别也可简短回复）。"},
-              {"type": "image", "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": TINY_PNG_B64
-              }}
-            ]
-          }]
-        })
-      } else {
-        json!({
-          "model": req.model,
-          "max_tokens": 16,
-          "messages": [{
-            "role": "user",
-            "content": "Reply with the single word: pong"
-          }]
-        })
-      };
+#[tauri::command]
+fn save_chat_store(store: ChatStore) -> Result<(), String> {
+  chat_store::save_chat_store_disk(&store)
+}
 
-      let res = client
-        .post(&url)
-        .header("x-api-key", key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTurn {
+  role: String,
+  content: String,
+}
 
-      let status = res.status();
-      let text = res.text().map_err(|e| e.to_string())?;
-      if !status.is_success() {
-        return Err(summarize_api_error(status, &text));
-      }
-      let snippet = extract_anthropic_reply(&text).unwrap_or_else(|| "OK".to_string());
-      Ok(format!("成功：{}", snippet))
-    }
-    "deepseek" => {
-      let base = req.base_url.trim_end_matches('/');
-      let url = format!("{}/v1/chat/completions", base);
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompleteChatRequest {
+  /// When null, uses `ModelConfig.default_provider_id`.
+  provider_id: Option<String>,
+  messages: Vec<ChatTurn>,
+}
 
-      let body = if req.test_kind == "multimodal" {
-        json!({
-          "model": req.model,
-          "max_tokens": 32,
-          "messages": [{
-            "role": "user",
-            "content": [
-              {"type": "text", "text": "描述这张图片（若不支持图片可说明）。"},
-              {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", TINY_PNG_B64)}}
-            ]
-          }]
-        })
-      } else {
-        json!({
-          "model": req.model,
-          "max_tokens": 16,
-          "messages": [{"role": "user", "content": "ping"}]
-        })
-      };
+fn resolve_provider<'a>(
+  model: &'a ModelConfig,
+  provider_id: Option<&str>,
+) -> Result<&'a ModelProvider, String> {
+  let id = provider_id
+    .map(|s| s.to_string())
+    .or(model.default_provider_id.clone())
+    .ok_or_else(|| "请先在设置中配置并选择默认模型供应商".to_string())?;
+  model
+    .providers
+    .iter()
+    .find(|p| p.id == id)
+    .ok_or_else(|| format!("找不到供应商: {}", id))
+}
 
-      let res = client
-        .post(&url)
-        .bearer_auth(key)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
-
-      let status = res.status();
-      let text = res.text().map_err(|e| e.to_string())?;
-      if !status.is_success() {
-        return Err(summarize_api_error(status, &text));
-      }
-      let snippet = extract_openai_reply(&text).unwrap_or_else(|| "OK".to_string());
-      Ok(format!("成功：{}", snippet))
-    }
-    other => Err(format!("未知供应商类型: {}", other)),
-  }
+#[tauri::command]
+fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
+  let model_config = load_model_config()?;
+  let provider = resolve_provider(&model_config, req.provider_id.as_deref())?;
+  let pairs: Vec<(String, String)> = req
+    .messages
+    .into_iter()
+    .map(|m| (m.role, m.content))
+    .collect();
+  llm::complete_chat(provider, &pairs)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -276,7 +189,10 @@ pub fn run() {
       save_config,
       load_model_config,
       save_model_config,
-      test_model_endpoint
+      test_model_endpoint,
+      load_chat_store,
+      save_chat_store,
+      complete_chat,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

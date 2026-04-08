@@ -18,7 +18,7 @@ function newId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `p-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function maskKey(_key: string): string {
+function maskKey(): string {
   return '******'
 }
 
@@ -220,7 +220,7 @@ export function SettingsModelPage() {
                         <dt className="shrink-0 text-slate-500 dark:text-slate-400">
                           {t('settings.model.apiKey')}
                         </dt>
-                        <dd className="font-mono text-slate-900 dark:text-slate-100">{maskKey(p.apiKey)}</dd>
+                        <dd className="font-mono text-slate-900 dark:text-slate-100">{maskKey()}</dd>
                       </div>
                       <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2 sm:items-baseline">
                         <dt className="shrink-0 text-slate-500 dark:text-slate-400">{t('settings.model.model')}</dt>
