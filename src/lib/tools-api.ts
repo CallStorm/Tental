@@ -34,6 +34,15 @@ export async function saveToolSecurity(config: ToolSecurityConfig): Promise<void
   await invoke('save_tool_security', { config })
 }
 
+export async function loadBlacklist(): Promise<string[]> {
+  const res = await invoke<string[]>('load_blacklist')
+  return Array.isArray(res) ? res : []
+}
+
+export async function saveBlacklist(list: string[]): Promise<void> {
+  await invoke('save_blacklist', { list })
+}
+
 export async function runTool(payload: {
   name: string
   input: unknown

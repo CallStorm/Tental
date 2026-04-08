@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils'
 const MAX_INPUT_CHARS = 10000
 const TITLE_MAX = 40
 const KEEP_TURNS_AFTER_COMPACT = 2
+const DEBUG_LOGS_STORAGE_KEY = 'chat.debug.logs.bySession'
 
 function newId(): string {
   return crypto.randomUUID()
@@ -104,8 +105,20 @@ export function ChatPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [slashHighlight, setSlashHighlight] = useState(0)
   const [debugEnabled, setDebugEnabled] = useState(false)
-  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [debugLogsBySession, setDebugLogsBySession] = useState<Record<string, string[]>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const storeRef = useRef<ChatStoreData | null>(null)
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+
+  const queueSave = useCallback((snapshot: ChatStoreData) => {
+    const task = saveQueueRef.current
+      .catch(() => {
+        // keep queue alive after a failed write
+      })
+      .then(() => saveChatStore(snapshot))
+    saveQueueRef.current = task
+    return task
+  }, [])
 
   const copyText = useCallback(async (text: string) => {
     const t = text.trim()
@@ -151,23 +164,37 @@ export function ChatPage() {
     setSlashHighlight((h) => Math.min(h, slashFiltered.length - 1))
   }, [showSlashPalette, slashFiltered.length])
 
-  const persist = useCallback(async (next: ChatStoreData) => {
-    setStore(next)
-    await saveChatStore(next)
-  }, [])
+  const persist = useCallback(
+    async (next: ChatStoreData) => {
+      storeRef.current = next
+      setStore(next)
+      await queueSave(next)
+    },
+    [queueSave],
+  )
 
-  const persistUpdate = useCallback(async (updater: (base: ChatStoreData) => ChatStoreData) => {
-    let next: ChatStoreData | null = null
-    setStore((base) => {
-      if (!base) return base
-      next = updater(base)
+  const persistUpdate = useCallback(
+    async (updater: (base: ChatStoreData) => ChatStoreData) => {
+      const base = storeRef.current
+      if (!base) return null
+      const next = updater(base)
+      storeRef.current = next
+      setStore(next)
+      await queueSave(next)
+      return next
+    },
+    [queueSave],
+  )
+
+  const appendDebugLog = useCallback((sid: string, line: string) => {
+    setDebugLogsBySession((base) => {
+      const next = {
+        ...base,
+        [sid]: [...(base[sid] ?? []), line].slice(-100),
+      }
+      window.localStorage.setItem(DEBUG_LOGS_STORAGE_KEY, JSON.stringify(next))
       return next
     })
-    if (next) {
-      await saveChatStore(next)
-      return next
-    }
-    return null
   }, [])
 
   const runTurnsWithToolLoop = useCallback(
@@ -220,7 +247,7 @@ export function ChatPage() {
               'messages' in e.tool
                 ? JSON.stringify((e.tool as Record<string, unknown>).messages, null, 2)
                 : JSON.stringify((e.tool as Record<string, unknown>).message ?? e.tool, null, 2)
-            setDebugLogs((base) => [...base, `[${stage}] ${logs}`].slice(-100))
+            appendDebugLog(sid, `[${stage}] ${logs}`)
             return
           }
           if (e.event === 'delta') {
@@ -311,7 +338,7 @@ export function ChatPage() {
         },
       })
     },
-    [debugEnabled, persistUpdate],
+    [appendDebugLog, debugEnabled, persistUpdate],
   )
 
   useEffect(() => {
@@ -336,7 +363,9 @@ export function ChatPage() {
         return
       }
       const sorted = [...s.sessions].sort((a, b) => b.updatedAt - a.updatedAt)
-      setStore({ ...s, sessions: sorted })
+      const initial = { ...s, sessions: sorted }
+      setStore(initial)
+      storeRef.current = initial
       setActiveId(sorted[0]?.id ?? null)
     })()
   }, [persist])
@@ -351,6 +380,28 @@ export function ChatPage() {
     const saved = window.localStorage.getItem('chat.debug.enabled')
     setDebugEnabled(saved === '1')
   }, [])
+
+  useEffect(() => {
+    storeRef.current = store
+  }, [store])
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(DEBUG_LOGS_STORAGE_KEY)
+    if (!raw) return
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string[]>
+      if (parsed && typeof parsed === 'object') {
+        setDebugLogsBySession(parsed)
+      }
+    } catch {
+      // ignore invalid local storage payload
+    }
+  }, [])
+
+  const debugLogs = useMemo(() => {
+    if (!activeId) return []
+    return debugLogsBySession[activeId] ?? []
+  }, [activeId, debugLogsBySession])
 
   const messages = useMemo(() => {
     if (!store || !activeId) return []
@@ -384,7 +435,6 @@ export function ChatPage() {
     setHistoryOpen(false)
     setInput('')
     setError(null)
-    setDebugLogs([])
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [store, persist, t])
 
@@ -719,7 +769,13 @@ export function ChatPage() {
                 const next = event.target.checked
                 setDebugEnabled(next)
                 if (!next) {
-                  setDebugLogs([])
+                  if (activeId) {
+                    setDebugLogsBySession((base) => {
+                      const nextMap = { ...base, [activeId]: [] }
+                      window.localStorage.setItem(DEBUG_LOGS_STORAGE_KEY, JSON.stringify(nextMap))
+                      return nextMap
+                    })
+                  }
                 }
                 window.localStorage.setItem('chat.debug.enabled', next ? '1' : '0')
               }}

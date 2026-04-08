@@ -66,37 +66,8 @@ impl Default for ToolSecurityConfig {
   fn default() -> Self {
     Self {
       allowed_roots: vec![], // default: no restriction
-      command_blacklist: vec![
-        "rm",
-        "del",
-        "erase",
-        "rmdir",
-        "rd",
-        "cmd",
-        "powershell",
-        "powershell.exe",
-        "format",
-        "diskpart",
-        "bcdedit",
-        "reg",
-        "vssadmin",
-        "wbadmin",
-        "cipher",
-        "takeown",
-        "icacls",
-        "shutdown",
-        "stop-computer",
-        "restart-computer",
-        "reboot",
-        "poweroff",
-        "mkfs",
-        "dd",
-        "Remove-Item",
-        "Clear-Item",
-      ]
-      .into_iter()
-      .map(|s| s.to_string())
-      .collect(),
+      // blacklist is configured from UI/tools-security.json, no hardcoded command defaults here
+      command_blacklist: vec![],
       max_file_bytes: 5 * 1024 * 1024,
       max_read_lines: 2000,
       reject_binary: true,
@@ -131,6 +102,77 @@ fn tools_security_path() -> Result<PathBuf, String> {
   Ok(get_tental_dir_path()?.join("tools-security.json"))
 }
 
+fn blacklist_path() -> Result<PathBuf, String> {
+  Ok(get_tental_dir_path()?.join("blacklist.json"))
+}
+
+fn default_windows_powershell_blacklist() -> Vec<String> {
+  if cfg!(windows) {
+    vec![
+      "remove-item",
+      "clear-item",
+      "remove-itemproperty",
+      "set-item",
+      "set-itemproperty",
+      "rename-item",
+      "move-item",
+      "stop-process",
+      "stop-service",
+      "set-service",
+      "disable-scheduledtask",
+      "unregister-scheduledtask",
+      "stop-computer",
+      "restart-computer",
+      "remove-localuser",
+      "remove-localgroup",
+      "remove-localgroupmember",
+    ]
+    .into_iter()
+    .map(|s| s.to_string())
+    .collect()
+  } else {
+    vec![]
+  }
+}
+
+pub fn ensure_blacklist_seeded() -> Result<Vec<String>, String> {
+  let path = blacklist_path()?;
+  if !path.exists() {
+    let seeded = default_windows_powershell_blacklist();
+    let content = serde_json::to_string_pretty(&seeded).map_err(|e| e.to_string())?;
+    fs::write(path, content).map_err(|e| e.to_string())?;
+    return Ok(seeded);
+  }
+  load_blacklist()
+}
+
+pub fn load_blacklist() -> Result<Vec<String>, String> {
+  let path = blacklist_path()?;
+  if !path.exists() {
+    return Ok(default_windows_powershell_blacklist());
+  }
+  let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+  let list = serde_json::from_str::<Vec<String>>(&content).unwrap_or_default();
+  Ok(
+    list
+      .into_iter()
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .collect(),
+  )
+}
+
+pub fn save_blacklist(list: &[String]) -> Result<(), String> {
+  let path = blacklist_path()?;
+  let normalized: Vec<String> = list
+    .iter()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .collect();
+  let content = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
+  fs::write(path, content).map_err(|e| e.to_string())
+}
+
 pub fn load_enabled_config() -> Result<ToolEnabledConfig, String> {
   let path = tools_enabled_path()?;
   if !path.exists() {
@@ -153,12 +195,17 @@ pub fn load_security_config() -> Result<ToolSecurityConfig, String> {
   }
   let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
   let cfg = serde_json::from_str::<ToolSecurityConfig>(&content).unwrap_or_default();
-  Ok(ToolSecurityConfig {
+  let mut merged = ToolSecurityConfig {
     // keep forward-compat defaults if missing
     max_file_bytes: if cfg.max_file_bytes == 0 { ToolSecurityConfig::default().max_file_bytes } else { cfg.max_file_bytes },
     max_read_lines: if cfg.max_read_lines == 0 { ToolSecurityConfig::default().max_read_lines } else { cfg.max_read_lines },
     ..cfg
-  })
+  };
+  let from_blacklist_file = ensure_blacklist_seeded()?;
+  if !from_blacklist_file.is_empty() {
+    merged.command_blacklist = from_blacklist_file;
+  }
+  Ok(merged)
 }
 
 pub fn save_security_config(cfg: &ToolSecurityConfig) -> Result<(), String> {
@@ -275,7 +322,8 @@ pub fn run_tool(name: &str, input: Value) -> Result<RunToolResponse, String> {
   let security = load_security_config()?;
 
   match name {
-    "bash" => shell_exec::run(&security, input, true),
+    // Always enforce blacklist from config in agent runtime.
+    "bash" => shell_exec::run(&security, input, false),
     "read_file" => fs_read::run(&security, input),
     "write_file" => fs_write::run(&security, input),
     "edit_file" => fs_edit::run(&security, input),

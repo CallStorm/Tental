@@ -181,6 +181,16 @@ fn save_tool_security(config: ToolSecurityConfig) -> Result<(), String> {
   tools::save_security_config(&config)
 }
 
+#[tauri::command]
+fn load_blacklist() -> Result<Vec<String>, String> {
+  tools::load_blacklist()
+}
+
+#[tauri::command]
+fn save_blacklist(list: Vec<String>) -> Result<(), String> {
+  tools::save_blacklist(&list)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunToolRequest {
@@ -646,6 +656,8 @@ mod tests {
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      // Seed blacklist.json on first app startup.
+      let _ = tools::ensure_blacklist_seeded();
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -668,6 +680,8 @@ pub fn run() {
       set_tool_enabled,
       load_tool_security,
       save_tool_security,
+      load_blacklist,
+      save_blacklist,
       run_tool,
       complete_chat,
       stream_chat,

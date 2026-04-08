@@ -25,7 +25,12 @@ fn is_blacklisted(security: &ToolSecurityConfig, base: &str) -> bool {
   security
     .command_blacklist
     .iter()
-    .any(|x| x.eq_ignore_ascii_case(base))
+    .any(|x| {
+      let rule = x.trim();
+      !rule.is_empty()
+        && (base.eq_ignore_ascii_case(rule)
+          || base.to_ascii_lowercase().contains(&rule.to_ascii_lowercase()))
+    })
 }
 
 fn classify_windows_shell_error(stderr: &str) -> &'static str {
@@ -54,36 +59,10 @@ fn classify_windows_shell_error(stderr: &str) -> &'static str {
   }
 }
 
-fn contains_windows_dangerous_pattern(command: &str) -> Option<&'static str> {
-  let normalized = command.to_ascii_lowercase().replace(['\n', '\r', '\t'], " ");
-  let patterns = [
-    ("remove-item", "remove_item"),
-    ("del ", "del"),
-    ("erase ", "erase"),
-    ("rmdir ", "rmdir"),
-    ("rd ", "rd"),
-    ("format ", "format"),
-    ("diskpart", "diskpart"),
-    ("reg delete", "reg_delete"),
-    ("vssadmin delete", "vssadmin_delete"),
-    ("wbadmin delete", "wbadmin_delete"),
-    ("bcdedit", "bcdedit"),
-    ("cipher /w", "cipher_wipe"),
-    ("shutdown ", "shutdown"),
-    ("stop-computer", "stop_computer"),
-    ("restart-computer", "restart_computer"),
-  ];
-  for (pat, code) in patterns {
-    if normalized.contains(pat) {
-      return Some(code);
-    }
-  }
-  None
-}
-
 #[cfg(test)]
 mod tests {
-  use super::{classify_windows_shell_error, contains_windows_dangerous_pattern};
+  use super::{classify_windows_shell_error, is_blacklisted};
+  use crate::tools::ToolSecurityConfig;
 
   #[test]
   fn classify_path_not_found() {
@@ -106,15 +85,21 @@ mod tests {
   }
 
   #[test]
-  fn dangerous_pattern_detected() {
-    let code = contains_windows_dangerous_pattern("Remove-Item -Recurse C:\\Temp");
-    assert_eq!(code, Some("remove_item"));
+  fn blacklist_exact_match_detected() {
+    let cfg = ToolSecurityConfig {
+      command_blacklist: vec!["remove-item".to_string()],
+      ..ToolSecurityConfig::default()
+    };
+    assert!(is_blacklisted(&cfg, "Remove-Item"));
   }
 
   #[test]
-  fn safe_command_not_detected() {
-    let code = contains_windows_dangerous_pattern("Get-ChildItem -Path $env:USERPROFILE");
-    assert_eq!(code, None);
+  fn blacklist_partial_rule_detected() {
+    let cfg = ToolSecurityConfig {
+      command_blacklist: vec!["stop-computer".to_string()],
+      ..ToolSecurityConfig::default()
+    };
+    assert!(is_blacklisted(&cfg, "Microsoft.PowerShell.Management\\Stop-Computer"));
   }
 }
 
@@ -145,23 +130,6 @@ pub fn run(security: &ToolSecurityConfig, input: Value, approved: bool) -> Resul
       error: Some("approval_required".to_string()),
       error_code: Some("approval_required".to_string()),
     });
-  }
-
-  if cfg!(windows) {
-    if let Some(code) = contains_windows_dangerous_pattern(&command) {
-      return Ok(RunToolResponse {
-        ok: false,
-        name: "bash".to_string(),
-        output: json!({
-          "command": command,
-          "baseCommand": base,
-          "reason": "dangerous_windows_command_blocked",
-          "pattern": code
-        }),
-        error: Some("dangerous_command_blocked".to_string()),
-        error_code: Some("dangerous_command_blocked".to_string()),
-      });
-    }
   }
 
   let started = Instant::now();

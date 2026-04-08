@@ -5,7 +5,9 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
   listTools,
+  loadBlacklist,
   loadToolSecurity,
+  saveBlacklist,
   saveToolSecurity,
   setToolEnabled,
   type ToolMeta,
@@ -13,6 +15,26 @@ import {
 } from '@/lib/tools-api'
 
 type TabKey = 'tools' | 'security'
+
+const windowsPowerShellBlacklist = [
+  'remove-item',
+  'clear-item',
+  'remove-itemproperty',
+  'set-item',
+  'set-itemproperty',
+  'rename-item',
+  'move-item',
+  'stop-process',
+  'stop-service',
+  'set-service',
+  'disable-scheduledtask',
+  'unregister-scheduledtask',
+  'stop-computer',
+  'restart-computer',
+  'remove-localuser',
+  'remove-localgroup',
+  'remove-localgroupmember',
+]
 
 const defaultSecurity: ToolSecurityConfig = {
   allowedRoots: [],
@@ -44,9 +66,24 @@ export function ToolsPage() {
 
   const loadAll = async () => {
     setHint(null)
-    const [toolList, sec] = await Promise.all([listTools(), loadToolSecurity()])
+    const [toolList, sec, fileBlacklist] = await Promise.all([
+      listTools(),
+      loadToolSecurity(),
+      loadBlacklist(),
+    ])
     setTools(toolList)
-    setSecurity(sec ?? defaultSecurity)
+    const resolved = sec ?? defaultSecurity
+    const commandBlacklist =
+      fileBlacklist.length > 0
+        ? fileBlacklist
+        : resolved.commandBlacklist.length > 0
+          ? resolved.commandBlacklist
+          : windowsPowerShellBlacklist
+    setSecurity({
+      ...defaultSecurity,
+      ...resolved,
+      commandBlacklist,
+    })
   }
 
   useEffect(() => {
@@ -72,7 +109,11 @@ export function ToolsPage() {
     setBusy(true)
     setHint(null)
     try {
-      await saveToolSecurity(security)
+      const blacklist = security.commandBlacklist
+      await Promise.all([
+        saveToolSecurity({ ...security, commandBlacklist: blacklist }),
+        saveBlacklist(blacklist),
+      ])
       setHint(t('common.saved', '已保存'))
     } catch (e) {
       setHint(e instanceof Error ? e.message : String(e))
@@ -223,7 +264,7 @@ export function ToolsPage() {
                 }
                 rows={8}
                 className="mt-2 w-full resize-none rounded-lg border border-slate-200 bg-white p-3 font-mono text-xs text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                placeholder="rm\ndel\nrmdir\nformat\ndiskpart\nshutdown"
+                placeholder="remove-item\nclear-item\nremove-itemproperty\nset-itemproperty\nstop-service\nstop-process\nstop-computer\nrestart-computer"
               />
             </div>
           </div>
