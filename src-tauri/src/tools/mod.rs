@@ -69,11 +69,24 @@ impl Default for ToolSecurityConfig {
       command_blacklist: vec![
         "rm",
         "del",
+        "erase",
         "rmdir",
         "rd",
+        "cmd",
+        "powershell",
+        "powershell.exe",
         "format",
         "diskpart",
+        "bcdedit",
+        "reg",
+        "vssadmin",
+        "wbadmin",
+        "cipher",
+        "takeown",
+        "icacls",
         "shutdown",
+        "stop-computer",
+        "restart-computer",
         "reboot",
         "poweroff",
         "mkfs",
@@ -155,17 +168,17 @@ pub fn save_security_config(cfg: &ToolSecurityConfig) -> Result<(), String> {
 }
 
 fn all_tool_defs() -> Vec<(String, String, String, String)> {
-  let os_name = match std::env::consts::OS {
-    "windows" => "Windows",
-    "macos" => "macOS",
-    "linux" => "Linux",
-    other => other,
+  let bash_desc = match std::env::consts::OS {
+    "windows" => "Run a PowerShell command on Windows.".to_string(),
+    "macos" => "Run a shell command on current OS (macOS).".to_string(),
+    "linux" => "Run a shell command on current OS (Linux).".to_string(),
+    other => format!("Run a shell command on current OS ({}).", other),
   };
   vec![
     (
       "bash".to_string(),
       "Bash".to_string(),
-      format!("Run a shell command on current OS ({}).", os_name),
+      bash_desc,
       "danger".to_string(),
     ),
     (

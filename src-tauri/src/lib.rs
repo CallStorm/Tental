@@ -293,6 +293,15 @@ fn estimate_tokens(content: &str) -> usize {
   (chars / 2).max(1)
 }
 
+fn windows_command_policy_lines() -> Vec<String> {
+  vec![
+    "Windows command policy: generate PowerShell syntax only. Never use cmd variable style like %VAR%; use $env:VAR."
+      .to_string(),
+    "For desktop file listing, use: $desktop=[Environment]::GetFolderPath('Desktop'); Get-ChildItem -Force $desktop | Select-Object -ExpandProperty Name"
+      .to_string(),
+  ]
+}
+
 fn trim_turns_for_context(pairs: &[(String, String)], max_context_tokens: usize) -> Vec<(String, String)> {
   if pairs.is_empty() {
     return vec![];
@@ -400,6 +409,9 @@ async fn stream_chat(
   } else {
     "请使用中文回复。".to_string()
   });
+  if cfg!(windows) {
+    system_parts.extend(windows_command_policy_lines());
+  }
   let mut anthropic_messages: Vec<serde_json::Value> = Vec::new();
   for (role, content) in trim_turns_for_context(&pairs, app_config.agent.max_context_tokens) {
     let c = content.trim();
@@ -431,6 +443,7 @@ async fn stream_chat(
     .collect();
 
   let max_loops = app_config.agent.max_iterations.max(1);
+  let mut consecutive_tool_failures: Option<(String, String, usize)> = None;
   for loop_idx in 0..max_loops {
     let body = serde_json::json!({
       "model": provider.model,
@@ -517,7 +530,16 @@ async fn stream_chat(
         name,
         input_print
       );
-      let res = tools::run_tool(&name, input)?;
+      let res = match tools::run_tool(&name, input) {
+        Ok(v) => v,
+        Err(e) => tools::RunToolResponse {
+          ok: false,
+          name: name.clone(),
+          output: serde_json::json!({}),
+          error: Some(e),
+          error_code: Some("tool_internal_error".to_string()),
+        },
+      };
       let payload = serde_json::json!({
         "id": id,
         "name": name,
@@ -536,6 +558,43 @@ async fn stream_chat(
         "tool_use_id": id,
         "content": payload.to_string()
       }));
+
+      if res.ok {
+        consecutive_tool_failures = None;
+      } else {
+        let err_code = res
+          .error_code
+          .clone()
+          .unwrap_or_else(|| "non_zero_exit".to_string());
+        let new_count = if let Some((prev_name, prev_code, count)) = &consecutive_tool_failures {
+          if *prev_name == name && *prev_code == err_code {
+            count + 1
+          } else {
+            1
+          }
+        } else {
+          1
+        };
+        consecutive_tool_failures = Some((name.clone(), err_code.clone(), new_count));
+        if new_count >= 2 {
+          let fallback = if cfg!(windows) {
+            "检测到同类命令连续失败，已停止自动重试。请改用 PowerShell 语法：$desktop=[Environment]::GetFolderPath('Desktop'); Get-ChildItem -Force $desktop | Select-Object -ExpandProperty Name"
+          } else {
+            "检测到同类命令连续失败，已停止自动重试。"
+          };
+          channel
+            .send(llm::StreamChatPayload::error(format!(
+              "tool repeated failure: name={}, errorCode={}",
+              name, err_code
+            )))
+            .map_err(|e| e.to_string())?;
+          channel
+            .send(llm::StreamChatPayload::delta(None, Some(fallback.to_string())))
+            .map_err(|e| e.to_string())?;
+          channel.send(llm::StreamChatPayload::done()).map_err(|e| e.to_string())?;
+          return Ok(());
+        }
+      }
     }
 
     if !tool_results.is_empty() {
@@ -568,6 +627,19 @@ async fn stream_chat(
     .send(llm::StreamChatPayload::error("tool loop exceeded max iterations".to_string()))
     .map_err(|e| e.to_string())?;
   channel.send(llm::StreamChatPayload::done()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::windows_command_policy_lines;
+
+  #[test]
+  fn windows_policy_enforces_powershell_variables() {
+    let joined = windows_command_policy_lines().join("\n");
+    assert!(joined.contains("$env:VAR"));
+    assert!(joined.contains("%VAR%"));
+    assert!(joined.contains("PowerShell"));
+  }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
