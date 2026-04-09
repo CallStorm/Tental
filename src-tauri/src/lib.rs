@@ -376,6 +376,88 @@ fn windows_command_policy_lines() -> Vec<String> {
   ]
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentClass {
+  ReadOnly,
+  WriteOrOperate,
+  General,
+}
+
+fn infer_intent_class(pairs: &[(String, String)]) -> IntentClass {
+  let last_user = pairs
+    .iter()
+    .rev()
+    .find(|(role, _)| role == "user")
+    .map(|(_, c)| c.to_lowercase())
+    .unwrap_or_default();
+  if last_user.is_empty() {
+    return IntentClass::General;
+  }
+  let write_keywords = [
+    "创建", "新建", "生成", "修改", "编辑", "删除", "写入", "更新", "重命名", "move", "rename", "delete", "create",
+    "write", "edit", "update", "remove", "install", "uninstall", "restart", "stop", "deploy",
+  ];
+  if write_keywords.iter().any(|k| last_user.contains(k)) {
+    return IntentClass::WriteOrOperate;
+  }
+  let readonly_keywords = [
+    "查询", "查", "统计", "汇总", "读取", "查看", "分析", "检索", "工时", "报表", "count", "query", "read", "list",
+    "show", "analyze", "summary",
+  ];
+  if readonly_keywords.iter().any(|k| last_user.contains(k)) {
+    return IntentClass::ReadOnly;
+  }
+  IntentClass::General
+}
+
+fn trust_guard_policy_lines() -> Vec<String> {
+  vec![
+    "可信执行约束：不得将假设写成事实；不得创建演示数据并冒充真实结果。".to_string(),
+    "若缺少合适工具、数据源或权限，必须明确说明无法可靠完成，并请求补充必要信息。".to_string(),
+    "当结论依赖工具执行时，输出需基于实际工具结果，不得伪造执行记录。".to_string(),
+  ]
+}
+
+fn is_potential_write_operation(tool_name: &str, input: &serde_json::Value) -> bool {
+  if tool_name == "write_file" || tool_name == "edit_file" {
+    return true;
+  }
+  if tool_name != "bash" {
+    return false;
+  }
+  let cmd = input
+    .get("command")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .to_lowercase();
+  if cmd.is_empty() {
+    return false;
+  }
+  let write_patterns = [
+    "set-content",
+    "add-content",
+    "out-file",
+    "new-item",
+    "remove-item",
+    "rename-item",
+    "move-item",
+    "copy-item",
+    "sc ",
+    "git commit",
+    "git push",
+    "npm install",
+    "cargo add",
+    "pip install",
+    ">",
+    ">>",
+  ];
+  write_patterns.iter().any(|p| cmd.contains(p))
+}
+
+fn needs_strong_evidence(intent: IntentClass) -> bool {
+  matches!(intent, IntentClass::ReadOnly)
+}
+
 fn trim_turns_for_context(pairs: &[(String, String)], max_context_tokens: usize) -> Vec<(String, String)> {
   if pairs.is_empty() {
     return vec![];
@@ -474,6 +556,7 @@ async fn stream_chat(
     .into_iter()
     .map(|m| (m.role, m.content))
     .collect();
+  let intent_class = infer_intent_class(&pairs);
   let tool_list = tools::list_tools()?;
   let enabled_tools: Vec<ToolMeta> = tool_list.into_iter().filter(|t| t.enabled).collect();
 
@@ -483,6 +566,7 @@ async fn stream_chat(
   } else {
     "请使用中文回复。".to_string()
   });
+  system_parts.extend(trust_guard_policy_lines());
   if cfg!(windows) {
     system_parts.extend(windows_command_policy_lines());
   }
@@ -518,6 +602,8 @@ async fn stream_chat(
 
   let max_loops = app_config.agent.max_iterations.max(1);
   let mut consecutive_tool_failures: Option<(String, String, usize)> = None;
+  let mut has_verified_tool_evidence = false;
+  let mut attempted_tool_calls = 0usize;
   for loop_idx in 0..max_loops {
     let body = serde_json::json!({
       "model": provider.model,
@@ -604,7 +690,17 @@ async fn stream_chat(
         name,
         input_print
       );
-      let res = match tools::run_tool(&name, input) {
+      attempted_tool_calls += 1;
+      let res = if intent_class != IntentClass::WriteOrOperate && is_potential_write_operation(&name, &input) {
+        tools::RunToolResponse {
+          ok: false,
+          name: name.clone(),
+          output: serde_json::json!({}),
+          error: Some("当前任务被识别为非修改类任务，已阻止潜在写操作。".to_string()),
+          error_code: Some("policy_write_forbidden_non_write_intent".to_string()),
+        }
+      } else {
+        match tools::run_tool(&name, input) {
         Ok(v) => v,
         Err(e) => tools::RunToolResponse {
           ok: false,
@@ -613,6 +709,7 @@ async fn stream_chat(
           error: Some(e),
           error_code: Some("tool_internal_error".to_string()),
         },
+      }
       };
       let payload = serde_json::json!({
         "id": id,
@@ -634,6 +731,7 @@ async fn stream_chat(
       }));
 
       if res.ok {
+        has_verified_tool_evidence = true;
         consecutive_tool_failures = None;
       } else {
         let err_code = res
@@ -688,6 +786,23 @@ async fn stream_chat(
       }
     }
     if !final_text.is_empty() {
+      if needs_strong_evidence(intent_class) && attempted_tool_calls > 0 && !has_verified_tool_evidence {
+        let fallback = if app_config.agent.language == "en" {
+          "I cannot provide a reliable result yet because no valid tool evidence was obtained. Please provide an accessible data source or required permissions."
+            .to_string()
+        } else {
+          "当前无法给出可靠结果：未获得有效工具证据。请提供可访问的数据源或必要权限后再查询。".to_string()
+        };
+        log::warn!(
+          "[LLM][stream_chat][trust_guard] fallback_without_evidence intent={:?}",
+          intent_class
+        );
+        channel
+          .send(llm::StreamChatPayload::delta(None, Some(fallback)))
+          .map_err(|e| e.to_string())?;
+        channel.send(llm::StreamChatPayload::done()).map_err(|e| e.to_string())?;
+        return Ok(());
+      }
       log::info!("[LLM][stream_chat][final_text] {}", final_text);
       channel
         .send(llm::StreamChatPayload::delta(None, Some(final_text)))
@@ -705,7 +820,7 @@ async fn stream_chat(
 
 #[cfg(test)]
 mod tests {
-  use super::windows_command_policy_lines;
+  use super::{infer_intent_class, is_potential_write_operation, windows_command_policy_lines, IntentClass};
 
   #[test]
   fn windows_policy_enforces_powershell_variables() {
@@ -713,6 +828,28 @@ mod tests {
     assert!(joined.contains("$env:VAR"));
     assert!(joined.contains("%VAR%"));
     assert!(joined.contains("PowerShell"));
+  }
+
+  #[test]
+  fn intent_class_detects_readonly_and_write() {
+    let read_pairs = vec![("user".to_string(), "查询用户工时汇总".to_string())];
+    assert_eq!(infer_intent_class(&read_pairs), IntentClass::ReadOnly);
+
+    let write_pairs = vec![("user".to_string(), "请修改这个文件内容".to_string())];
+    assert_eq!(infer_intent_class(&write_pairs), IntentClass::WriteOrOperate);
+  }
+
+  #[test]
+  fn write_operation_detection_for_bash_and_file_tools() {
+    assert!(is_potential_write_operation("write_file", &serde_json::json!({})));
+    assert!(is_potential_write_operation(
+      "bash",
+      &serde_json::json!({"command":"Set-Content -Path a.txt -Value 1"})
+    ));
+    assert!(!is_potential_write_operation(
+      "bash",
+      &serde_json::json!({"command":"Get-ChildItem -Force"})
+    ));
   }
 }
 
