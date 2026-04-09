@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export type ProviderType = 'minimax_cn'
+export type ProviderType = 'minimax_cn' | 'kimi_cn'
 
 export type ModelProvider = {
   id: string
@@ -26,6 +26,11 @@ export const PRESETS: Record<
       { value: 'MiniMax-M2.7', label: 'MiniMax M2.7' },
       { value: 'MiniMax-M2.7-highspeed', label: 'MiniMax M2.7 Highspeed' },
     ],
+  },
+  kimi_cn: {
+    title: 'Kimi（中国）',
+    baseUrl: 'https://api.moonshot.cn/anthropic',
+    models: [{ value: 'kimi-k2.5', label: 'Kimi K2.5' }],
   },
 }
 

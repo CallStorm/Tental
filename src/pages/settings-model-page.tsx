@@ -22,24 +22,34 @@ function maskKey(): string {
   return '******'
 }
 
-function ProviderLogo() {
+function ProviderLogo({ providerType }: { providerType: string }) {
+  const isKimi = providerType === 'kimi_cn'
   return (
     <div
       className={cn(
         'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-sm',
-        'bg-gradient-to-br from-pink-400 via-orange-300 to-amber-400',
+        isKimi
+          ? 'bg-gradient-to-br from-indigo-500 via-blue-500 to-cyan-400'
+          : 'bg-gradient-to-br from-pink-400 via-orange-300 to-amber-400',
       )}
       aria-hidden
     >
-      <span className="flex gap-0.5">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="block h-5 w-0.5 rounded-full bg-white/90"
-            style={{ transform: `scaleY(${0.65 + i * 0.12})` }}
-          />
-        ))}
-      </span>
+      {isKimi ? (
+        <span className="relative block h-5 w-5">
+          <span className="absolute inset-0 rounded-full bg-white/95" />
+          <span className="absolute -right-0.5 top-0.5 h-4 w-4 rounded-full bg-blue-500/95" />
+        </span>
+      ) : (
+        <span className="flex gap-0.5">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="block h-5 w-0.5 rounded-full bg-white/90"
+              style={{ transform: `scaleY(${0.65 + i * 0.12})` }}
+            />
+          ))}
+        </span>
+      )}
     </div>
   )
 }
@@ -76,7 +86,10 @@ export function SettingsModelPage() {
   }
 
   const openEdit = (provider: ModelProvider) => {
-    const nextType = provider.providerType === 'minimax_cn' ? provider.providerType : 'minimax_cn'
+    const nextType =
+      provider.providerType === 'minimax_cn' || provider.providerType === 'kimi_cn'
+        ? provider.providerType
+        : 'minimax_cn'
     setEditingProviderId(provider.id)
     setDraftType(nextType)
     setDraftKey(provider.apiKey)
@@ -152,7 +165,8 @@ export function SettingsModelPage() {
 
   const providerLabel = useCallback(
     (p: ModelProvider) => {
-      const pt = p.providerType === 'minimax_cn' ? p.providerType : null
+      const pt =
+        p.providerType === 'minimax_cn' || p.providerType === 'kimi_cn' ? p.providerType : null
       if (!pt) return p.providerType
       return t(`settings.model.provider.${pt}`)
     },
@@ -160,7 +174,8 @@ export function SettingsModelPage() {
   )
 
   const modelLabel = (p: ModelProvider) => {
-    const pt = p.providerType === 'minimax_cn' ? p.providerType : null
+    const pt =
+      p.providerType === 'minimax_cn' || p.providerType === 'kimi_cn' ? p.providerType : null
     if (!pt) return p.model
     const found = PRESETS[pt].models.find((m) => m.value === p.model)
     return found?.label ?? p.model
@@ -168,7 +183,7 @@ export function SettingsModelPage() {
 
   const providerOptions = useMemo(
     () =>
-      (['minimax_cn'] as ProviderType[]).map((value) => ({
+      (['minimax_cn', 'kimi_cn'] as ProviderType[]).map((value) => ({
         value,
         label: t(`settings.model.provider.${value}`),
       })),
@@ -199,7 +214,7 @@ export function SettingsModelPage() {
                 className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-md ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/5"
               >
                 <div className="flex gap-3">
-                  <ProviderLogo />
+                  <ProviderLogo providerType={p.providerType} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate text-lg font-bold text-slate-900 dark:text-slate-50">
@@ -279,9 +294,12 @@ export function SettingsModelPage() {
             aria-modal
             aria-labelledby="model-add-title"
           >
-            <h3 id="model-add-title" className="text-lg font-semibold">
-              {editingProviderId ? t('settings.model.editTitle') : t('settings.model.addTitle')}
-            </h3>
+            <div className="flex items-center gap-2">
+              <ProviderLogo providerType={draftType} />
+              <h3 id="model-add-title" className="text-lg font-semibold">
+                {editingProviderId ? t('settings.model.editTitle') : t('settings.model.addTitle')}
+              </h3>
+            </div>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               {editingProviderId ? t('settings.model.editHint') : t('settings.model.addHint')}
             </p>

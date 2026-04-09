@@ -139,7 +139,7 @@ pub fn complete_chat(provider: &ModelProvider, messages: &[(String, String)]) ->
   }
 
   match provider.provider_type.as_str() {
-    "minimax_cn" => complete_anthropic_messages(provider, messages),
+    "minimax_cn" | "kimi_cn" => complete_anthropic_messages(provider, messages),
     other => Err(format!("未知供应商类型: {}", other)),
   }
 }
@@ -209,7 +209,7 @@ pub fn run_test_model_endpoint(input: TestModelInput<'_>) -> Result<String, Stri
   }
 
   match input.provider_type {
-    "minimax_cn" => {
+    "minimax_cn" | "kimi_cn" => {
       let url = format!(
         "{}/v1/messages",
         input.base_url.trim_end_matches('/')
