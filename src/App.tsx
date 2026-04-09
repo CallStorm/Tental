@@ -8,6 +8,7 @@ import { SettingsLayoutPage } from '@/pages/settings-layout-page'
 import { SettingsModelPage } from '@/pages/settings-model-page'
 import { SettingsPlaceholderPage } from '@/pages/settings-placeholder-page'
 import { McpPage } from '@/pages/mcp-page'
+import { SkillsPage } from '@/pages/skills-page'
 import { ToolsPage } from '@/pages/tools-page'
 
 function App() {
@@ -21,7 +22,7 @@ function App() {
         <Route path="/tasks" element={<ComingSoonPage title="定时任务" />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/tools" element={<ToolsPage />} />
-        <Route path="/skills" element={<ComingSoonPage title="技能" />} />
+        <Route path="/skills" element={<SkillsPage />} />
         <Route path="/profile" element={<ComingSoonPage title="个性配置" />} />
         <Route path="/settings" element={<SettingsLayoutPage />}>
           <Route index element={<Navigate to="/settings/general" replace />} />

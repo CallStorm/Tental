@@ -1,6 +1,7 @@
 mod chat_store;
 mod llm;
 mod mcp;
+mod skills;
 mod tools;
 
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,85 @@ fn test_mcp_client(req: DeleteMcpClientRequest) -> Result<mcp::McpConnectionTest
 #[tauri::command]
 fn list_mcp_client_tools(req: DeleteMcpClientRequest) -> Result<Vec<mcp::McpToolMeta>, String> {
   mcp::list_mcp_client_tools(&req.id)
+}
+
+#[tauri::command]
+fn list_skills() -> Result<Vec<skills::SkillMeta>, String> {
+  skills::list_skills()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSkillCmdRequest {
+  name: String,
+  content: String,
+  #[serde(default)]
+  config: serde_json::Value,
+}
+
+#[tauri::command]
+fn create_skill(req: CreateSkillCmdRequest) -> Result<(), String> {
+  skills::create_skill(skills::CreateSkillRequest {
+    name: req.name,
+    content: req.content,
+    config: req.config,
+  })
+}
+
+#[tauri::command]
+fn get_skill_content(req: DeleteSkillRequest) -> Result<skills::SkillContentPayload, String> {
+  skills::get_skill_content(&req.name)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveSkillContentRequest {
+  name: String,
+  content: String,
+}
+
+#[tauri::command]
+fn save_skill_content(req: SaveSkillContentRequest) -> Result<(), String> {
+  skills::save_skill_content(&req.name, &req.content)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSkillEnabledRequest {
+  name: String,
+  enabled: bool,
+}
+
+#[tauri::command]
+fn set_skill_enabled(req: SetSkillEnabledRequest) -> Result<(), String> {
+  skills::set_skill_enabled(&req.name, req.enabled)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteSkillRequest {
+  name: String,
+}
+
+#[tauri::command]
+fn delete_skill(req: DeleteSkillRequest) -> Result<(), String> {
+  skills::delete_skill(&req.name)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportSkillsZipRequest {
+  zip_base64: String,
+}
+
+#[tauri::command]
+fn import_skills_zip(req: ImportSkillsZipRequest) -> Result<skills::ImportSkillsZipResult, String> {
+  skills::import_skills_zip_base64(&req.zip_base64)
+}
+
+#[tauri::command]
+fn bootstrap_builtin_skills() -> Result<(), String> {
+  skills::bootstrap_builtin_skills()
 }
 
 #[derive(Deserialize)]
@@ -1020,6 +1100,14 @@ pub fn run() {
       set_mcp_client_enabled,
       test_mcp_client,
       list_mcp_client_tools,
+      list_skills,
+      create_skill,
+      get_skill_content,
+      save_skill_content,
+      set_skill_enabled,
+      delete_skill,
+      import_skills_zip,
+      bootstrap_builtin_skills,
       complete_chat,
       stream_chat,
     ])
