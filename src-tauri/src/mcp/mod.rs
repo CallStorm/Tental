@@ -1,6 +1,8 @@
 use crate::get_tental_dir_path;
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{
+  ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -176,27 +178,94 @@ fn summarize_http_error(status: reqwest::StatusCode, body: &str) -> String {
   }
 }
 
-fn rpc_post(client: &McpClientConfig, body: &Value) -> Result<Value, String> {
+fn parse_json_from_response_text(text: &str) -> Result<Value, String> {
+  let trimmed = text.trim();
+  if trimmed.is_empty() {
+    return Ok(json!({}));
+  }
+
+  if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+    return Ok(v);
+  }
+
+  // Some streamable_http MCP servers reply as SSE:
+  // event: message
+  // data: {"jsonrpc":"2.0", ...}
+  let mut sse_data_buf = String::new();
+  for raw_line in trimmed.lines() {
+    let line = raw_line.trim();
+    if line.is_empty() {
+      continue;
+    }
+    if let Some(data) = line.strip_prefix("data:") {
+      let payload = data.trim();
+      if payload.is_empty() || payload == "[DONE]" {
+        continue;
+      }
+      if let Ok(v) = serde_json::from_str::<Value>(payload) {
+        return Ok(v);
+      }
+      sse_data_buf.push_str(payload);
+      sse_data_buf.push('\n');
+      continue;
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(line) {
+      return Ok(v);
+    }
+  }
+
+  if !sse_data_buf.trim().is_empty() {
+    for chunk in sse_data_buf.lines() {
+      let t = chunk.trim();
+      if t.is_empty() {
+        continue;
+      }
+      if let Ok(v) = serde_json::from_str::<Value>(t) {
+        return Ok(v);
+      }
+    }
+  }
+
+  Err("响应不是合法 JSON（或 SSE data JSON）".to_string())
+}
+
+fn rpc_post(
+  client: &McpClientConfig,
+  body: &Value,
+  session_id: Option<&str>,
+) -> Result<(Value, Option<String>), String> {
   let http = http_client()?;
-  let headers = merged_headers(client)?;
+  let mut headers = merged_headers(client)?;
+  if let Some(session) = session_id {
+    let trimmed = session.trim();
+    if !trimmed.is_empty() {
+      let value =
+        HeaderValue::from_str(trimmed).map_err(|_| "无效 MCP Session ID".to_string())?;
+      headers.insert("mcp-session-id", value);
+    }
+  }
   let res = http
     .post(client.url.trim())
     .headers(headers)
     .json(body)
     .send()
     .map_err(|e| format!("连接失败: {}", e))?;
+  let response_session_id = res
+    .headers()
+    .get("mcp-session-id")
+    .and_then(|v| v.to_str().ok())
+    .map(|s| s.to_string());
   let status = res.status();
   let text = res.text().map_err(|e| e.to_string())?;
   if !status.is_success() {
     return Err(summarize_http_error(status, &text));
   }
-  if text.trim().is_empty() {
-    return Ok(json!({}));
-  }
-  serde_json::from_str::<Value>(&text).map_err(|e| format!("响应不是合法 JSON: {}", e))
+  let parsed = parse_json_from_response_text(&text)?;
+  Ok((parsed, response_session_id))
 }
 
 fn rpc_initialize(client: &McpClientConfig) -> Result<(), String> {
+  let mut session_id: Option<String> = None;
   let init_body = json!({
     "jsonrpc": "2.0",
     "id": 1,
@@ -210,7 +279,10 @@ fn rpc_initialize(client: &McpClientConfig) -> Result<(), String> {
       }
     }
   });
-  let init_res = rpc_post(client, &init_body)?;
+  let (init_res, init_session_id) = rpc_post(client, &init_body, session_id.as_deref())?;
+  if init_session_id.is_some() {
+    session_id = init_session_id;
+  }
   if init_res.get("error").is_some() {
     return Err(format!(
       "MCP initialize 失败: {}",
@@ -227,7 +299,7 @@ fn rpc_initialize(client: &McpClientConfig) -> Result<(), String> {
     "method": "notifications/initialized",
     "params": {}
   });
-  let _ = rpc_post(client, &notify_body);
+  let _ = rpc_post(client, &notify_body, session_id.as_deref());
   Ok(())
 }
 
@@ -331,7 +403,42 @@ pub fn test_mcp_client(id: &str) -> Result<McpConnectionTestResult, String> {
 pub fn list_mcp_client_tools(id: &str) -> Result<Vec<McpToolMeta>, String> {
   let client = find_client(id)?;
   validate_http_url(&client.url)?;
-  rpc_initialize(&client)?;
+  let mut session_id: Option<String> = None;
+
+  let init_body = json!({
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "Tental",
+        "version": "0.1.0"
+      }
+    }
+  });
+  let (init_res, init_session_id) = rpc_post(&client, &init_body, session_id.as_deref())?;
+  if init_session_id.is_some() {
+    session_id = init_session_id;
+  }
+  if init_res.get("error").is_some() {
+    return Err(format!(
+      "MCP initialize 失败: {}",
+      init_res
+        .get("error")
+        .and_then(|x| x.get("message"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown error")
+    ));
+  }
+
+  let notify_body = json!({
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized",
+    "params": {}
+  });
+  let _ = rpc_post(&client, &notify_body, session_id.as_deref());
 
   let list_body = json!({
     "jsonrpc": "2.0",
@@ -339,7 +446,7 @@ pub fn list_mcp_client_tools(id: &str) -> Result<Vec<McpToolMeta>, String> {
     "method": "tools/list",
     "params": {}
   });
-  let v = rpc_post(&client, &list_body)?;
+  let (v, _) = rpc_post(&client, &list_body, session_id.as_deref())?;
   if let Some(err) = v.get("error") {
     let msg = err
       .get("message")
