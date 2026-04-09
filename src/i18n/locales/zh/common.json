@@ -84,5 +84,14 @@
   "chat.compact.systemPrefix": "【对话摘要】",
   "chat.compact.prompt": "请根据以下对话生成简洁的中文摘要，便于后续在较短上下文中继续交流。只输出摘要正文，不要多余说明。",
   "chat.compact.noteLine": "附加说明",
-  "chat.title.maxLen": "40"
+  "chat.title.maxLen": "40",
+  "mcp.title": "MCP 客户端",
+  "mcp.create": "创建客户端",
+  "mcp.edit": "编辑客户端",
+  "mcp.delete": "删除",
+  "mcp.enable": "启用",
+  "mcp.disable": "禁用",
+  "mcp.testConnection": "测试连接",
+  "mcp.fetchTools": "拉取工具",
+  "mcp.transport.streamableHttp": "Streamable HTTP"
 }

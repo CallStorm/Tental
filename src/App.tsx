@@ -7,6 +7,7 @@ import { SettingsAgentPage } from '@/pages/settings-agent-page'
 import { SettingsLayoutPage } from '@/pages/settings-layout-page'
 import { SettingsModelPage } from '@/pages/settings-model-page'
 import { SettingsPlaceholderPage } from '@/pages/settings-placeholder-page'
+import { McpPage } from '@/pages/mcp-page'
 import { ToolsPage } from '@/pages/tools-page'
 
 function App() {
@@ -18,7 +19,7 @@ function App() {
         <Route path="/knowledge" element={<ComingSoonPage title="知识库" />} />
         <Route path="/workflow" element={<ComingSoonPage title="工作流" />} />
         <Route path="/tasks" element={<ComingSoonPage title="定时任务" />} />
-        <Route path="/mcp" element={<ComingSoonPage title="MCP" />} />
+        <Route path="/mcp" element={<McpPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/skills" element={<ComingSoonPage title="技能" />} />
         <Route path="/profile" element={<ComingSoonPage title="个性配置" />} />

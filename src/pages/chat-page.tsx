@@ -818,9 +818,11 @@ export function ChatPage() {
       <div className="flex min-h-0 flex-1 flex-col">
         {messages.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-8">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-orange-500/15 text-3xl">
-              🐯
-            </div>
+            <img
+              src="/app-brand.png"
+              alt=""
+              className="h-28 w-28 object-contain"
+            />
             <div className="max-w-md text-center">
               <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
                 {t('chat.empty.greeting')}

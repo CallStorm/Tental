@@ -1,5 +1,6 @@
 mod chat_store;
 mod llm;
+mod mcp;
 mod tools;
 
 use serde::{Deserialize, Serialize};
@@ -201,6 +202,69 @@ struct RunToolRequest {
 #[tauri::command]
 fn run_tool(req: RunToolRequest) -> Result<tools::RunToolResponse, String> {
   tools::run_tool(&req.name, req.input)
+}
+
+#[tauri::command]
+fn list_mcp_clients() -> Result<Vec<mcp::McpClientConfig>, String> {
+  mcp::list_mcp_clients()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveMcpClientCmdRequest {
+  id: Option<String>,
+  name: String,
+  url: String,
+  #[serde(default)]
+  headers: Vec<mcp::McpHeader>,
+  #[serde(default)]
+  bearer_token: String,
+  enabled: bool,
+}
+
+#[tauri::command]
+fn save_mcp_client(req: SaveMcpClientCmdRequest) -> Result<mcp::McpClientConfig, String> {
+  mcp::save_mcp_client(mcp::SaveMcpClientRequest {
+    id: req.id,
+    name: req.name,
+    url: req.url,
+    headers: req.headers,
+    bearer_token: req.bearer_token,
+    enabled: req.enabled,
+  })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteMcpClientRequest {
+  id: String,
+}
+
+#[tauri::command]
+fn delete_mcp_client(req: DeleteMcpClientRequest) -> Result<(), String> {
+  mcp::delete_mcp_client(&req.id)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetMcpClientEnabledRequest {
+  id: String,
+  enabled: bool,
+}
+
+#[tauri::command]
+fn set_mcp_client_enabled(req: SetMcpClientEnabledRequest) -> Result<(), String> {
+  mcp::set_mcp_client_enabled(&req.id, req.enabled)
+}
+
+#[tauri::command]
+fn test_mcp_client(req: DeleteMcpClientRequest) -> Result<mcp::McpConnectionTestResult, String> {
+  mcp::test_mcp_client(&req.id)
+}
+
+#[tauri::command]
+fn list_mcp_client_tools(req: DeleteMcpClientRequest) -> Result<Vec<mcp::McpToolMeta>, String> {
+  mcp::list_mcp_client_tools(&req.id)
 }
 
 #[derive(Deserialize)]
@@ -683,6 +747,12 @@ pub fn run() {
       load_blacklist,
       save_blacklist,
       run_tool,
+      list_mcp_clients,
+      save_mcp_client,
+      delete_mcp_client,
+      set_mcp_client_enabled,
+      test_mcp_client,
+      list_mcp_client_tools,
       complete_chat,
       stream_chat,
     ])
