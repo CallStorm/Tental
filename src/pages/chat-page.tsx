@@ -70,6 +70,7 @@ type ToolCardData = {
   kind: 'tool'
   id: string
   name: string
+  source?: string
   status: 'calling' | 'ok' | 'error'
   input?: unknown
   output?: unknown
@@ -281,6 +282,7 @@ export function ChatPage() {
               kind: 'tool',
               id,
               name,
+              source: typeof e.tool.source === 'string' ? e.tool.source : undefined,
               status: 'calling',
               input,
             }
@@ -315,6 +317,7 @@ export function ChatPage() {
               kind: 'tool',
               id: toolState.toolResult.id,
               name: toolState.toolResult.name,
+              source: typeof e.tool.source === 'string' ? e.tool.source : undefined,
               status: toolState.toolResult.ok ? 'ok' : 'error',
               input: toolState.toolCall?.input,
               output: toolState.toolResult.output,
@@ -961,6 +964,11 @@ export function ChatPage() {
                             <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', badgeCls)}>
                               {badge}
                             </span>
+                            {card.source ? (
+                              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                {card.source}
+                              </span>
+                            ) : null}
                             <span className="rounded-full bg-white/60 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-black/10 dark:text-slate-200">
                               {card.id}
                             </span>

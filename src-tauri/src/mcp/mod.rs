@@ -1,4 +1,5 @@
 use crate::get_tental_dir_path;
+use crate::tools;
 use reqwest::blocking::Client;
 use reqwest::header::{
   ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
@@ -67,6 +68,38 @@ pub struct McpToolMeta {
   pub name: String,
   #[serde(default)]
   pub description: String,
+  #[serde(default)]
+  pub input_schema: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatMcpToolDef {
+  pub tool_name: String,
+  pub description: String,
+  pub input_schema: Value,
+  pub client_id: String,
+  pub remote_tool_name: String,
+}
+
+pub fn encode_chat_mcp_tool_name(client_id: &str, remote_tool_name: &str) -> String {
+  let normalized_client = client_id.trim().replace("__", "_");
+  let normalized_remote = remote_tool_name.trim().replace("__", "_");
+  format!("mcp__{}__{}", normalized_client, normalized_remote)
+}
+
+pub fn decode_chat_mcp_tool_name(tool_name: &str) -> Option<(String, String)> {
+  let prefix = "mcp__";
+  if !tool_name.starts_with(prefix) {
+    return None;
+  }
+  let rest = &tool_name[prefix.len()..];
+  let mut parts = rest.splitn(2, "__");
+  let client_id = parts.next()?.trim();
+  let remote_tool_name = parts.next()?.trim();
+  if client_id.is_empty() || remote_tool_name.is_empty() {
+    return None;
+  }
+  Some((client_id.to_string(), remote_tool_name.to_string()))
 }
 
 fn default_enabled() -> bool {
@@ -175,6 +208,19 @@ fn summarize_http_error(status: reqwest::StatusCode, body: &str) -> String {
     format!("HTTP {}", status)
   } else {
     format!("HTTP {} — {}", status, trimmed)
+  }
+}
+
+fn map_mcp_error_code(msg: &str) -> String {
+  let m = msg.to_lowercase();
+  if m.contains("timed out") || m.contains("timeout") {
+    "mcp_timeout".to_string()
+  } else if m.contains("401") || m.contains("403") || m.contains("bearer") || m.contains("auth") {
+    "mcp_auth_failed".to_string()
+  } else if m.contains("unknown tool") || m.contains("tools/call 失败") {
+    "unknown_tool".to_string()
+  } else {
+    "mcp_server_error".to_string()
   }
 }
 
@@ -303,6 +349,44 @@ fn rpc_initialize(client: &McpClientConfig) -> Result<(), String> {
   Ok(())
 }
 
+fn rpc_initialize_session(client: &McpClientConfig) -> Result<Option<String>, String> {
+  let mut session_id: Option<String> = None;
+  let init_body = json!({
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "Tental",
+        "version": "0.1.0"
+      }
+    }
+  });
+  let (init_res, init_session_id) = rpc_post(client, &init_body, session_id.as_deref())?;
+  if init_session_id.is_some() {
+    session_id = init_session_id;
+  }
+  if init_res.get("error").is_some() {
+    return Err(format!(
+      "MCP initialize 失败: {}",
+      init_res
+        .get("error")
+        .and_then(|x| x.get("message"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown error")
+    ));
+  }
+  let notify_body = json!({
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized",
+    "params": {}
+  });
+  let _ = rpc_post(client, &notify_body, session_id.as_deref());
+  Ok(session_id)
+}
+
 fn find_client(id: &str) -> Result<McpClientConfig, String> {
   let store = load_mcp_store()?;
   store
@@ -403,42 +487,7 @@ pub fn test_mcp_client(id: &str) -> Result<McpConnectionTestResult, String> {
 pub fn list_mcp_client_tools(id: &str) -> Result<Vec<McpToolMeta>, String> {
   let client = find_client(id)?;
   validate_http_url(&client.url)?;
-  let mut session_id: Option<String> = None;
-
-  let init_body = json!({
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-      "protocolVersion": "2024-11-05",
-      "capabilities": {},
-      "clientInfo": {
-        "name": "Tental",
-        "version": "0.1.0"
-      }
-    }
-  });
-  let (init_res, init_session_id) = rpc_post(&client, &init_body, session_id.as_deref())?;
-  if init_session_id.is_some() {
-    session_id = init_session_id;
-  }
-  if init_res.get("error").is_some() {
-    return Err(format!(
-      "MCP initialize 失败: {}",
-      init_res
-        .get("error")
-        .and_then(|x| x.get("message"))
-        .and_then(|x| x.as_str())
-        .unwrap_or("unknown error")
-    ));
-  }
-
-  let notify_body = json!({
-    "jsonrpc": "2.0",
-    "method": "notifications/initialized",
-    "params": {}
-  });
-  let _ = rpc_post(&client, &notify_body, session_id.as_deref());
+  let session_id = rpc_initialize_session(&client)?;
 
   let list_body = json!({
     "jsonrpc": "2.0",
@@ -473,8 +522,105 @@ pub fn list_mcp_client_tools(id: &str) -> Result<Vec<McpToolMeta>, String> {
         .and_then(|x| x.as_str())
         .unwrap_or_default()
         .to_string(),
+      input_schema: item
+        .get("inputSchema")
+        .cloned()
+        .or_else(|| item.get("input_schema").cloned())
+        .unwrap_or_else(|| json!({"type":"object","additionalProperties":true})),
     })
     .filter(|t| !t.name.trim().is_empty())
     .collect();
   Ok(mapped)
+}
+
+pub fn list_enabled_mcp_chat_tools() -> Result<Vec<ChatMcpToolDef>, String> {
+  let clients = list_mcp_clients()?;
+  let mut out: Vec<ChatMcpToolDef> = Vec::new();
+  for client in clients.into_iter().filter(|c| c.enabled) {
+    match list_mcp_client_tools(&client.id) {
+      Ok(tools) => {
+        for t in tools {
+          let name = t.name.trim();
+          if name.is_empty() {
+            continue;
+          }
+          out.push(ChatMcpToolDef {
+            tool_name: encode_chat_mcp_tool_name(&client.id, name),
+            description: if t.description.trim().is_empty() {
+              format!("MCP tool from client {}", client.name)
+            } else {
+              t.description.clone()
+            },
+            input_schema: t.input_schema,
+            client_id: client.id.clone(),
+            remote_tool_name: name.to_string(),
+          });
+        }
+      }
+      Err(e) => {
+        log::warn!("[MCP][chat_tools] skip client={} reason={}", client.id, e);
+      }
+    }
+  }
+  Ok(out)
+}
+
+pub fn run_mcp_chat_tool(tool_name: &str, input: Value) -> Result<tools::RunToolResponse, String> {
+  let (client_id, remote_tool_name) =
+    decode_chat_mcp_tool_name(tool_name).ok_or_else(|| format!("unknown tool: {}", tool_name))?;
+  let client = find_client(&client_id)?;
+  if !client.enabled {
+    return Ok(tools::RunToolResponse {
+      ok: false,
+      name: tool_name.to_string(),
+      output: json!({}),
+      error: Some("MCP 客户端未启用".to_string()),
+      error_code: Some("tool_exec_failed".to_string()),
+    });
+  }
+  validate_http_url(&client.url)?;
+  let session_id = rpc_initialize_session(&client)?;
+  let call_body = json!({
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": remote_tool_name,
+      "arguments": input
+    }
+  });
+  let call = rpc_post(&client, &call_body, session_id.as_deref());
+  match call {
+    Ok((v, _)) => {
+      if let Some(err) = v.get("error") {
+        let msg = err
+          .get("message")
+          .and_then(|x| x.as_str())
+          .unwrap_or("unknown error")
+          .to_string();
+        return Ok(tools::RunToolResponse {
+          ok: false,
+          name: tool_name.to_string(),
+          output: json!({}),
+          error: Some(format!("MCP tools/call 失败: {}", msg)),
+          error_code: Some(map_mcp_error_code(&msg)),
+        });
+      }
+      let result = v.get("result").cloned().unwrap_or_else(|| json!({}));
+      Ok(tools::RunToolResponse {
+        ok: true,
+        name: tool_name.to_string(),
+        output: result,
+        error: None,
+        error_code: None,
+      })
+    }
+    Err(e) => Ok(tools::RunToolResponse {
+      ok: false,
+      name: tool_name.to_string(),
+      output: json!({}),
+      error: Some(e.clone()),
+      error_code: Some(map_mcp_error_code(&e)),
+    }),
+  }
 }

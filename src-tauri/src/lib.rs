@@ -4,6 +4,7 @@ mod mcp;
 mod tools;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
@@ -361,6 +362,58 @@ fn anthropic_tool_input_schema(tool_id: &str) -> serde_json::Value {
   }
 }
 
+#[derive(Debug, Clone)]
+enum ToolSource {
+  Builtin,
+  Mcp {
+    client_id: String,
+    remote_tool_name: String,
+  },
+}
+
+#[derive(Debug, Clone)]
+struct ToolRef {
+  source: ToolSource,
+}
+
+fn redact_debug_value(v: &Value) -> Value {
+  match v {
+    Value::Object(map) => {
+      let mut out = serde_json::Map::new();
+      for (k, val) in map {
+        let key_l = k.to_lowercase();
+        if key_l.contains("token") || key_l.contains("authorization") || key_l.contains("api_key") {
+          out.insert(k.clone(), Value::String("[REDACTED]".to_string()));
+        } else {
+          out.insert(k.clone(), redact_debug_value(val));
+        }
+      }
+      Value::Object(out)
+    }
+    Value::Array(arr) => Value::Array(arr.iter().map(redact_debug_value).collect()),
+    _ => v.clone(),
+  }
+}
+
+fn normalize_error_code(code: Option<String>, message: Option<&str>) -> String {
+  if let Some(c) = code {
+    let c = c.trim().to_string();
+    if !c.is_empty() {
+      return c;
+    }
+  }
+  let m = message.unwrap_or("").to_lowercase();
+  if m.contains("timeout") || m.contains("timed out") {
+    "mcp_timeout".to_string()
+  } else if m.contains("auth") || m.contains("401") || m.contains("403") || m.contains("bearer") {
+    "mcp_auth_failed".to_string()
+  } else if m.contains("invalid") || m.contains("schema") {
+    "invalid_input".to_string()
+  } else {
+    "tool_exec_failed".to_string()
+  }
+}
+
 fn estimate_tokens(content: &str) -> usize {
   // Lightweight estimate: mixed CJK/ASCII average around 2 chars/token.
   let chars = content.chars().count();
@@ -559,6 +612,13 @@ async fn stream_chat(
   let intent_class = infer_intent_class(&pairs);
   let tool_list = tools::list_tools()?;
   let enabled_tools: Vec<ToolMeta> = tool_list.into_iter().filter(|t| t.enabled).collect();
+  let mcp_tools = tokio::task::spawn_blocking(mcp::list_enabled_mcp_chat_tools)
+    .await
+    .map_err(|e| e.to_string())?
+    .unwrap_or_else(|e| {
+      log::warn!("[MCP][stream_chat] failed to list chat tools: {}", e);
+      Vec::new()
+    });
 
   let mut system_parts: Vec<String> = Vec::new();
   system_parts.push(if app_config.agent.language == "en" {
@@ -589,9 +649,16 @@ async fn stream_chat(
     }));
   }
 
-  let tool_defs: Vec<serde_json::Value> = enabled_tools
+  let mut tool_refs: std::collections::HashMap<String, ToolRef> = std::collections::HashMap::new();
+  let mut tool_defs: Vec<serde_json::Value> = enabled_tools
     .iter()
     .map(|t| {
+      tool_refs.insert(
+        t.id.clone(),
+        ToolRef {
+          source: ToolSource::Builtin,
+        },
+      );
       serde_json::json!({
         "name": t.id,
         "description": t.description,
@@ -599,6 +666,23 @@ async fn stream_chat(
       })
     })
     .collect();
+  for mt in mcp_tools {
+    let source = ToolSource::Mcp {
+      client_id: mt.client_id.clone(),
+      remote_tool_name: mt.remote_tool_name.clone(),
+    };
+    tool_refs.insert(
+      mt.tool_name.clone(),
+      ToolRef {
+        source,
+      },
+    );
+    tool_defs.push(serde_json::json!({
+      "name": mt.tool_name,
+      "description": mt.description,
+      "input_schema": mt.input_schema
+    }));
+  }
 
   let max_loops = app_config.agent.max_iterations.max(1);
   let mut consecutive_tool_failures: Option<(String, String, usize)> = None;
@@ -619,10 +703,11 @@ async fn stream_chat(
       body_print
     );
     if req.debug {
+      let redacted_body = redact_debug_value(&body);
       channel
         .send(llm::StreamChatPayload::tool_event(
           "debug_trace",
-          serde_json::json!({"stage":"messages_input","message": body}),
+          serde_json::json!({"stage":"messages_input","message": redacted_body}),
         ))
         .map_err(|e| e.to_string())?;
     }
@@ -640,10 +725,11 @@ async fn stream_chat(
       response_print
     );
     if req.debug {
+      let redacted_response = redact_debug_value(&response);
       channel
         .send(llm::StreamChatPayload::tool_event(
           "debug_trace",
-          serde_json::json!({"stage":"messages_output","message": response}),
+          serde_json::json!({"stage":"messages_output","message": redacted_response}),
         ))
         .map_err(|e| e.to_string())?;
     }
@@ -677,10 +763,26 @@ async fn stream_chat(
         .get("input")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+      let tool_ref = tool_refs.get(&name).cloned();
+      let source_label = match &tool_ref {
+        Some(ToolRef {
+          source:
+            ToolSource::Mcp {
+              client_id,
+              remote_tool_name,
+            },
+          ..
+        }) => format!("mcp:{}:{}", client_id, remote_tool_name),
+        Some(ToolRef {
+          source: ToolSource::Builtin,
+          ..
+        }) => "builtin".to_string(),
+        None => "unknown".to_string(),
+      };
       channel
         .send(llm::StreamChatPayload::tool_event(
           "tool_call",
-          serde_json::json!({"id": id, "name": name, "input": input}),
+          serde_json::json!({"id": id, "name": name, "input": input, "source": source_label.clone()}),
         ))
         .map_err(|e| e.to_string())?;
       let input_print = serde_json::to_string(&input).unwrap_or_else(|_| "<serialize_failed>".to_string());
@@ -700,16 +802,44 @@ async fn stream_chat(
           error_code: Some("policy_write_forbidden_non_write_intent".to_string()),
         }
       } else {
-        match tools::run_tool(&name, input) {
-        Ok(v) => v,
-        Err(e) => tools::RunToolResponse {
-          ok: false,
-          name: name.clone(),
-          output: serde_json::json!({}),
-          error: Some(e),
-          error_code: Some("tool_internal_error".to_string()),
-        },
-      }
+        let run_result = match &tool_ref {
+          Some(ToolRef {
+            source: ToolSource::Builtin,
+            ..
+          }) => tools::run_tool(&name, input.clone()),
+          Some(ToolRef {
+            source: ToolSource::Mcp { .. },
+            ..
+          }) => {
+            let name_for_call = name.clone();
+            let input_for_call = input.clone();
+            tokio::task::spawn_blocking(move || mcp::run_mcp_chat_tool(&name_for_call, input_for_call))
+              .await
+              .map_err(|e| e.to_string())?
+          }
+          None => Ok(tools::RunToolResponse {
+            ok: false,
+            name: name.clone(),
+            output: serde_json::json!({}),
+            error: Some(format!("unknown tool: {}", name)),
+            error_code: Some("unknown_tool".to_string()),
+          }),
+        };
+        match run_result {
+          Ok(v) => v,
+          Err(e) => tools::RunToolResponse {
+            ok: false,
+            name: name.clone(),
+            output: serde_json::json!({}),
+            error: Some(e),
+            error_code: Some("tool_exec_failed".to_string()),
+          },
+        }
+      };
+      let normalized_error_code = if res.ok {
+        None
+      } else {
+        Some(normalize_error_code(res.error_code.clone(), res.error.as_deref()))
       };
       let payload = serde_json::json!({
         "id": id,
@@ -717,7 +847,8 @@ async fn stream_chat(
         "ok": res.ok,
         "output": res.output,
         "error": res.error,
-        "errorCode": res.error_code,
+        "errorCode": normalized_error_code,
+        "source": source_label,
       });
       channel
         .send(llm::StreamChatPayload::tool_event("tool_result", payload.clone()))
@@ -734,10 +865,9 @@ async fn stream_chat(
         has_verified_tool_evidence = true;
         consecutive_tool_failures = None;
       } else {
-        let err_code = res
-          .error_code
+        let err_code = normalized_error_code
           .clone()
-          .unwrap_or_else(|| "non_zero_exit".to_string());
+          .unwrap_or_else(|| "tool_exec_failed".to_string());
         let new_count = if let Some((prev_name, prev_code, count)) = &consecutive_tool_failures {
           if *prev_name == name && *prev_code == err_code {
             count + 1
