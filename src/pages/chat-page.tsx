@@ -6,7 +6,6 @@ import {
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import i18n from '@/i18n'
 import {
   Copy,
   History,
@@ -37,6 +36,13 @@ import {
   type ChatTurn,
 } from '@/lib/chat-api'
 import { loadModelConfig, type ModelConfig } from '@/lib/model-config'
+import {
+  buildApiTurns,
+  getSkinUiStrings,
+  labelForToolName,
+  normalizeChatSkinId,
+} from '@/lib/chat-ui-skins'
+import { defaultConfig, loadConfig, type AppConfig } from '@/lib/tauri-config'
 import { cn } from '@/lib/utils'
 
 const MAX_INPUT_CHARS = 10000
@@ -95,7 +101,8 @@ function parseToolCard(content: string): ToolCardData | null {
 }
 
 export function ChatPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const [appCfg, setAppCfg] = useState<AppConfig>(defaultConfig)
   const [store, setStore] = useState<ChatStoreData | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
@@ -346,8 +353,13 @@ export function ChatPage() {
 
   useEffect(() => {
     void (async () => {
-      const [s, m] = await Promise.all([loadChatStore(), loadModelConfig()])
+      const [s, m, cfg] = await Promise.all([
+        loadChatStore(),
+        loadModelConfig(),
+        loadConfig(),
+      ])
       setModelConfig(m)
+      setAppCfg(cfg)
       const titleNew = i18n.t('chat.newChatTitle')
       if (!s.sessions.length) {
         const id = newId()
@@ -371,7 +383,7 @@ export function ChatPage() {
       storeRef.current = initial
       setActiveId(sorted[0]?.id ?? null)
     })()
-  }, [persist])
+  }, [persist, i18n])
 
   useEffect(() => {
     if (!toast) return
@@ -410,6 +422,13 @@ export function ChatPage() {
     if (!store || !activeId) return []
     return store.messages[activeId] ?? []
   }, [store, activeId])
+
+  const chatSkinId = normalizeChatSkinId(appCfg.chatUiSkin)
+  const skinLang = i18n.language.startsWith('zh') ? 'zh' : 'en'
+  const skinLabels = useMemo(
+    () => getSkinUiStrings(chatSkinId, skinLang, t),
+    [chatSkinId, skinLang, t],
+  )
 
   const activeSession = useMemo(() => {
     if (!store || !activeId) return null
@@ -634,10 +653,11 @@ export function ChatPage() {
       s = { ...s, messages: { ...s.messages, [sid]: afterUser } }
       await persist(s)
 
-      const turns = afterUser.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }))
+      const turns = buildApiTurns(
+        afterUser,
+        normalizeChatSkinId(appCfg.chatUiSkin),
+        appCfg.chatUiPersonaEnabled && appCfg.chatUiSkin !== 'default',
+      )
       setSending(true)
       setError(null)
       try {
@@ -648,7 +668,17 @@ export function ChatPage() {
         setSending(false)
       }
     },
-    [activeId, store, ensureDefaultProvider, maybeSetTitleFromUser, persist, runTurnsWithToolLoop, t],
+    [
+      activeId,
+      store,
+      appCfg.chatUiSkin,
+      appCfg.chatUiPersonaEnabled,
+      ensureDefaultProvider,
+      maybeSetTitleFromUser,
+      persist,
+      runTurnsWithToolLoop,
+      t,
+    ],
   )
 
   const onSubmit = useCallback(async () => {
@@ -752,9 +782,12 @@ export function ChatPage() {
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      data-chat-persona={appCfg.chatUiPersonaEnabled ? 'on' : 'off'}
+    >
       {toast ? (
-        <div className="pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900">
+        <div className="skin-toast pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900">
           {toast}
         </div>
       ) : null}
@@ -828,10 +861,10 @@ export function ChatPage() {
             />
             <div className="max-w-md text-center">
               <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
-                {t('chat.empty.greeting')}
+                {skinLabels.emptyGreeting}
               </p>
               <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                {t('chat.empty.sub')}
+                {skinLabels.emptySub}
               </p>
             </div>
             <div className="flex w-full max-w-md flex-col gap-2">
@@ -868,12 +901,12 @@ export function ChatPage() {
                 <div
                   className={cn(
                     m.role === 'assistant'
-                      ? 'w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
+                      ? 'chat-skin-msg chat-skin-msg-assistant w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
                       : m.role === 'tool'
-                        ? 'w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
-                      : 'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
+                        ? 'chat-skin-msg chat-skin-msg-tool w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed'
+                      : 'chat-skin-msg max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
                     m.role === 'user'
-                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                      ? 'chat-skin-msg-user bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                       : m.role === 'system'
                         ? 'border border-amber-200/80 bg-amber-50 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100'
                         : m.role === 'tool'
@@ -883,9 +916,9 @@ export function ChatPage() {
                 >
                   <span className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide opacity-70">
                     {m.role === 'user'
-                      ? t('chat.role.user')
+                      ? skinLabels.roleUser
                       : m.role === 'assistant'
-                        ? t('chat.role.assistant')
+                        ? skinLabels.roleAssistant
                         : m.role === 'tool'
                           ? 'Tool'
                           : 'System'}
@@ -898,7 +931,7 @@ export function ChatPage() {
                         >
                           <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-slate-500 outline-none dark:text-slate-400 [&::-webkit-details-marker]:hidden">
                             <Lightbulb className="h-3.5 w-3.5 shrink-0" />
-                            <span>{t('chat.thinking.label')}</span>
+                            <span>{skinLabels.thinkingLabel}</span>
                             <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-60 transition-transform group-open:-rotate-180" />
                           </summary>
                           <div className="mt-2 border-t border-slate-200/70 pt-2 text-slate-600 dark:border-slate-600/60 dark:text-slate-400">
@@ -922,7 +955,9 @@ export function ChatPage() {
                           onClick={() =>
                             void copyText(
                               [
-                                m.thinking ? `# ${t('chat.thinking.label')}\n${m.thinking}\n` : '',
+                                m.thinking
+                                  ? `# ${skinLabels.thinkingLabel}\n${m.thinking}\n`
+                                  : '',
                                 m.content,
                               ]
                                 .filter(Boolean)
@@ -943,12 +978,13 @@ export function ChatPage() {
                       if (!card) {
                         return <p className="whitespace-pre-wrap">{m.content}</p>
                       }
+                      const toolTitle = labelForToolName(chatSkinId, card.name)
                       const badge =
                         card.status === 'calling'
-                            ? '执行中'
+                          ? skinLabels.toolStatusCalling
                           : card.status === 'ok'
-                              ? '成功'
-                              : '失败'
+                            ? skinLabels.toolStatusOk
+                            : skinLabels.toolStatusError
                       const badgeCls =
                         card.status === 'ok'
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
@@ -960,7 +996,7 @@ export function ChatPage() {
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <Hammer className="h-3.5 w-3.5" />
-                            <span className="font-semibold">{card.name}</span>
+                            <span className="font-semibold">{toolTitle}</span>
                             <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', badgeCls)}>
                               {badge}
                             </span>
@@ -976,18 +1012,22 @@ export function ChatPage() {
 
                           <details className="group rounded-xl border border-indigo-200/70 bg-white/50 px-3 py-2 dark:border-indigo-900/40 dark:bg-black/10">
                             <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-indigo-700 outline-none dark:text-indigo-300 [&::-webkit-details-marker]:hidden">
-                              <span>输入/输出</span>
+                              <span>{skinLabels.toolIoToggle}</span>
                               <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-70 transition-transform group-open:-rotate-180" />
                             </summary>
                             <div className="mt-2 space-y-2 border-t border-indigo-200/60 pt-2 text-xs dark:border-indigo-900/40">
                               <div>
-                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">Input</div>
+                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">
+                                  {skinLabels.toolIoInput}
+                                </div>
                                 <pre className="overflow-x-auto rounded-lg bg-white/70 p-2 font-mono text-[11px] text-slate-800 dark:bg-slate-950/40 dark:text-slate-100">
                                   {JSON.stringify(card.input ?? null, null, 2)}
                                 </pre>
                               </div>
                               <div>
-                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">Output</div>
+                                <div className="mb-1 font-semibold text-indigo-800 dark:text-indigo-200">
+                                  {skinLabels.toolIoOutput}
+                                </div>
                                 <pre className="overflow-x-auto rounded-lg bg-white/70 p-2 font-mono text-[11px] text-slate-800 dark:bg-slate-950/40 dark:text-slate-100">
                                   {JSON.stringify(card.output ?? null, null, 2)}
                                 </pre>
@@ -1048,13 +1088,18 @@ export function ChatPage() {
               ))}
             </div>
           ) : null}
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div className="chat-skin-input-shell rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            {skinLabels.inputBanner ? (
+              <div className="chat-skin-input-banner mb-2 text-center text-xs font-semibold tracking-wide text-amber-900/90 dark:text-amber-100/90">
+                {skinLabels.inputBanner}
+              </div>
+            ) : null}
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDownTextarea}
-              placeholder={t('chat.input.placeholder')}
+              placeholder={skinLabels.placeholder}
               rows={3}
               maxLength={MAX_INPUT_CHARS}
               className="w-full resize-none bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
@@ -1085,12 +1130,15 @@ export function ChatPage() {
                 <Button
                   type="button"
                   size="sm"
-                  className="h-9 w-9 p-0"
+                  className={cn(
+                    'h-9 w-9 p-0',
+                    chatSkinId === 'imperial' && 'chat-skin-seal-btn',
+                  )}
                   disabled={
                     sending || !input.trim() || input.length > MAX_INPUT_CHARS
                   }
                   onClick={() => void onSubmit()}
-                  aria-label={t('chat.send')}
+                  aria-label={skinLabels.sendAria}
                 >
                   {sending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1108,11 +1156,11 @@ export function ChatPage() {
         <>
           <button
             type="button"
-            className="fixed inset-0 z-40 bg-black/20"
+            className="skin-overlay fixed inset-0 z-40 bg-black/20"
             aria-label="Close"
             onClick={() => setHistoryOpen(false)}
           />
-          <aside className="fixed inset-y-0 right-0 z-50 flex w-full max-w-sm flex-col border-l border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950">
+          <aside className="skin-floating-panel fixed inset-y-0 right-0 z-50 flex w-full max-w-sm flex-col border-l border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
               <h2 className="text-sm font-semibold">{t('chat.history.title')}</h2>
               <Button

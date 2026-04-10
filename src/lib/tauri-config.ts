@@ -1,9 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import type { ChatSkinId } from '@/lib/chat-ui-skins'
+import { normalizeChatSkinId } from '@/lib/chat-ui-skins'
+
 export type AppConfig = {
   theme: 'light' | 'dark' | 'system'
   language: 'zh' | 'en'
   agent: AgentConfig
+  chatUiSkin: ChatSkinId
+  chatUiPersonaEnabled: boolean
 }
 
 export type AgentConfig = {
@@ -26,6 +31,8 @@ export const defaultConfig: AppConfig = {
   theme: 'system',
   language: 'zh',
   agent: defaultAgentConfig,
+  chatUiSkin: 'default',
+  chatUiPersonaEnabled: false,
 }
 
 export async function loadConfig(): Promise<AppConfig> {
@@ -53,6 +60,11 @@ export async function loadConfig(): Promise<AppConfig> {
             ? config.agent.maxRetryCount
             : defaultAgentConfig.maxRetryCount,
       },
+      chatUiSkin: normalizeChatSkinId(config.chatUiSkin),
+      chatUiPersonaEnabled:
+        typeof config.chatUiPersonaEnabled === 'boolean'
+          ? config.chatUiPersonaEnabled
+          : defaultConfig.chatUiPersonaEnabled,
     }
   } catch {
     return defaultConfig

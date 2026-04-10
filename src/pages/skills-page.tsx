@@ -372,8 +372,8 @@ export function SkillsPage() {
       ) : null}
 
       {formOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="skin-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="skin-modal-panel max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
                 创建技能
@@ -457,8 +457,8 @@ export function SkillsPage() {
       ) : null}
 
       {editorOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="skin-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="skin-modal-panel max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
                 编辑技能

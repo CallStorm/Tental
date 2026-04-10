@@ -191,7 +191,7 @@ export function SettingsModelPage() {
   )
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+    <section className="skin-page-card rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-2xl font-semibold">{t('settings.model.title')}</h2>
         <Button type="button" className="shrink-0 gap-1.5" onClick={openAdd}>
@@ -282,14 +282,14 @@ export function SettingsModelPage() {
 
       {modalOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[1px]"
+          className="skin-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[1px]"
           role="presentation"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setModalOpen(false)
           }}
         >
           <div
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            className="skin-modal-panel max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
             role="dialog"
             aria-modal
             aria-labelledby="model-add-title"

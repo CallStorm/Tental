@@ -32,7 +32,7 @@ export function SettingsAgentPage() {
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+    <section className="skin-page-card rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
       <h2 className="mb-6 text-2xl font-semibold">{t('settings.agent.title')}</h2>
 
       <div className="space-y-6">
