@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  ClipboardCheck,
   Hammer,
   Library,
   MessageSquare,
@@ -18,6 +19,7 @@ import {
 
 const navItems = [
   { to: '/chat', icon: MessageSquare, label: '聊天' },
+  { to: '/evaluation', icon: ClipboardCheck, label: '测评' },
   { to: '/knowledge', icon: Library, label: '知识库' },
   { to: '/workflow', icon: Workflow, label: '工作流' },
   { to: '/tasks', icon: Clock3, label: '定时任务' },

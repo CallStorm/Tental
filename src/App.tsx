@@ -10,6 +10,7 @@ import { SettingsPlaceholderPage } from '@/pages/settings-placeholder-page'
 import { McpPage } from '@/pages/mcp-page'
 import { SkillsPage } from '@/pages/skills-page'
 import { ToolsPage } from '@/pages/tools-page'
+import { EvaluationPage } from '@/pages/evaluation-page'
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/evaluation" element={<EvaluationPage />} />
         <Route path="/knowledge" element={<ComingSoonPage title="知识库" />} />
         <Route path="/workflow" element={<ComingSoonPage title="工作流" />} />
         <Route path="/tasks" element={<ComingSoonPage title="定时任务" />} />

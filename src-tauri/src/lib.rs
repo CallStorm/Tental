@@ -1,4 +1,5 @@
 mod chat_store;
+mod evaluation_store;
 mod llm;
 mod mcp;
 mod skills;
@@ -165,6 +166,16 @@ fn load_chat_store() -> Result<ChatStore, String> {
 #[tauri::command]
 fn save_chat_store(store: ChatStore) -> Result<(), String> {
   chat_store::save_chat_store_disk(&store)
+}
+
+#[tauri::command]
+fn load_evaluation_store() -> Result<evaluation_store::EvaluationStore, String> {
+  evaluation_store::load_evaluation_store_disk()
+}
+
+#[tauri::command]
+fn save_evaluation_store(store: evaluation_store::EvaluationStore) -> Result<(), String> {
+  evaluation_store::save_evaluation_store_disk(&store)
 }
 
 #[tauri::command]
@@ -1097,6 +1108,8 @@ pub fn run() {
       test_model_endpoint,
       load_chat_store,
       save_chat_store,
+      load_evaluation_store,
+      save_evaluation_store,
       list_tools,
       set_tool_enabled,
       load_tool_security,
