@@ -753,6 +753,153 @@ pub fn import_skills_zip_base64(zip_base64: &str) -> Result<ImportSkillsZipResul
   res
 }
 
+// ---- Chat: progressive skill loading (L1 catalog + L2 load_skill body) ----
+// L3 (e.g. references/ under a skill dir): not injected here; load via read_file/bash when paths are available.
+
+/// `applicableChannels` from config.json matches `skillChannel` (e.g. chat, evaluation).
+pub fn channel_matches(applicable_channels: &str, skill_channel: &str) -> bool {
+  let ac = applicable_channels.trim();
+  if ac.is_empty() || ac == "所有" {
+    return true;
+  }
+  let req = skill_channel.trim().to_lowercase();
+  if req.is_empty() {
+    return true;
+  }
+  ac.split(|c| c == ',' || c == '，')
+    .map(|s| s.trim().to_lowercase())
+    .filter(|s| !s.is_empty())
+    .any(|x| x == req)
+}
+
+/// Body of SKILL.md: content after the closing `---` of the YAML frontmatter.
+pub fn skill_markdown_body(raw: &str) -> String {
+  let (_, body) = parse_skill_frontmatter(raw);
+  body
+}
+
+/// Raw YAML text between first `---` and second `---` (no delimiters), if present.
+pub fn skill_frontmatter_yaml_raw(raw: &str) -> Option<String> {
+  let trimmed = raw.trim_start_matches('\u{feff}');
+  if !trimmed.starts_with("---") {
+    return None;
+  }
+  let rest = &trimmed[3..];
+  let end = rest.find("\n---")?;
+  let inner = rest[..end].trim();
+  if inner.is_empty() {
+    return None;
+  }
+  Some(inner.to_string())
+}
+
+fn eligible_skill_metas(skill_channel: &str) -> Result<Vec<SkillMeta>, String> {
+  let mut v: Vec<SkillMeta> = list_skills()?
+    .into_iter()
+    .filter(|m| m.enabled && channel_matches(&m.applicable_channels, skill_channel))
+    .collect();
+  v.sort_by(|a, b| a.name.cmp(&b.name));
+  Ok(v)
+}
+
+/// L1 block for system prompt: `minimal` (name + description lines) or `full_yaml` (frontmatter per skill).
+pub fn build_skill_l1_catalog(
+  skill_channel: &str,
+  catalog_mode: &str,
+  max_total_chars: usize,
+  language_zh: bool,
+) -> Result<String, String> {
+  let metas = eligible_skill_metas(skill_channel)?;
+  if metas.is_empty() {
+    return Ok(String::new());
+  }
+
+  let mode = catalog_mode.trim().to_lowercase();
+  let mut out = String::new();
+
+  if mode == "full_yaml" || mode == "fullyaml" {
+    out.push_str("Skills — YAML frontmatter (per skill):\n\n");
+    for m in &metas {
+      let root = skill_root_for_name(&m.name)?;
+      let path = skill_md_path_in_dir(&root).ok_or_else(|| "SKILL.md 缺失".to_string())?;
+      let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+      let yaml = skill_frontmatter_yaml_raw(&raw).unwrap_or_else(|| "（无 YAML 块）".to_string());
+      out.push_str(&format!("### {}\n---\n{}\n---\n\n", m.name, yaml));
+    }
+  } else {
+    out.push_str("Skills available:\n");
+    for m in &metas {
+      let desc = m.description.trim();
+      let desc_one_line: String = desc.lines().map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+      out.push_str(&format!("- {}: {}\n", m.name, desc_one_line));
+    }
+    out.push('\n');
+  }
+
+  let guide = if language_zh {
+    "若需要某项技能的完整操作说明（SKILL.md 正文），请先使用 load_skill 工具，参数 name 与上表中的名称一致。"
+  } else {
+    "When you need full procedural instructions for a skill (SKILL.md body), call the load_skill tool with name matching an entry above."
+  };
+  out.push_str(guide);
+  out.push('\n');
+
+  if out.chars().count() > max_total_chars {
+    let truncated: String = out.chars().take(max_total_chars).collect();
+    return Ok(format!("{}\n...(skill catalog truncated)", truncated));
+  }
+  Ok(out)
+}
+
+/// Load SKILL.md body for an enabled skill on this channel; error text lists available names (s05-style).
+pub fn load_skill_body_for_channel(
+  name: &str,
+  skill_channel: &str,
+  max_body_chars: usize,
+) -> Result<String, String> {
+  let allowed = eligible_skill_metas(skill_channel)?;
+  let allowed_names: Vec<String> = allowed.iter().map(|m| m.name.clone()).collect();
+  let n = name.trim();
+  if n.is_empty() {
+    let known = allowed_names.join(", ");
+    return Err(if known.is_empty() {
+      "Error: load_skill requires \"name\". No skills available for this channel.".to_string()
+    } else {
+      format!(
+        "Error: load_skill requires \"name\". Available skills: {}",
+        known
+      )
+    });
+  }
+  if !allowed_names.iter().any(|x| x == n) {
+    let known = allowed_names.join(", ");
+    return Err(if known.is_empty() {
+      format!(
+        "Error: Unknown skill '{}'. No skills available for this channel.",
+        n
+      )
+    } else {
+      format!(
+        "Error: Unknown skill '{}'. Available skills: {}",
+        n, known
+      )
+    });
+  }
+
+  let payload = get_skill_content(n)?;
+  let mut body = skill_markdown_body(&payload.content);
+  body = body.trim().to_string();
+  let nchars = body.chars().count();
+  if nchars > max_body_chars {
+    body = body
+      .chars()
+      .take(max_body_chars)
+      .collect::<String>()
+      + "\n...(truncated)";
+  }
+  Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -766,6 +913,15 @@ mod tests {
   #[test]
   fn validate_skill_name_rejects_upper() {
     assert!(validate_skill_name("Weather").is_err());
+  }
+
+  #[test]
+  fn channel_matches_all_and_list() {
+    assert!(channel_matches("所有", "chat"));
+    assert!(channel_matches("", "evaluation"));
+    assert!(channel_matches("chat, evaluation", "evaluation"));
+    assert!(channel_matches("chat，evaluation", "chat"));
+    assert!(!channel_matches("chat", "evaluation"));
   }
 
   #[test]

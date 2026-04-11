@@ -29,6 +29,18 @@ struct AppConfig {
   chat_ui_persona_enabled: bool,
 }
 
+fn default_skill_catalog_mode() -> String {
+  "minimal".to_string()
+}
+
+fn default_skill_l1_max_chars() -> usize {
+  12_000
+}
+
+fn default_skill_body_max_chars() -> usize {
+  200_000
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default, rename_all = "camelCase")]
 struct AgentConfig {
@@ -37,6 +49,13 @@ struct AgentConfig {
   max_context_tokens: usize,
   auto_retry_enabled: bool,
   max_retry_count: usize,
+  /// `minimal` | `full_yaml` — L1 skill catalog in system prompt.
+  #[serde(default = "default_skill_catalog_mode")]
+  skill_catalog_mode: String,
+  #[serde(default = "default_skill_l1_max_chars")]
+  skill_l1_max_chars: usize,
+  #[serde(default = "default_skill_body_max_chars")]
+  skill_body_max_chars: usize,
 }
 
 impl Default for AppConfig {
@@ -59,6 +78,9 @@ impl Default for AgentConfig {
       max_context_tokens: 12_000,
       auto_retry_enabled: true,
       max_retry_count: 2,
+      skill_catalog_mode: default_skill_catalog_mode(),
+      skill_l1_max_chars: default_skill_l1_max_chars(),
+      skill_body_max_chars: default_skill_body_max_chars(),
     }
   }
 }
@@ -382,6 +404,9 @@ struct CompleteChatRequest {
   /// When null, uses `ModelConfig.default_provider_id`.
   provider_id: Option<String>,
   messages: Vec<ChatTurn>,
+  /// e.g. `chat`, `evaluation`. Default: `chat`.
+  #[serde(default)]
+  skill_channel: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -391,6 +416,9 @@ struct StreamChatRequest {
   messages: Vec<ChatTurn>,
   #[serde(default)]
   debug: bool,
+  /// e.g. `chat`, `evaluation`. Default: `chat`.
+  #[serde(default)]
+  skill_channel: Option<String>,
 }
 
 fn resolve_provider<'a>(
@@ -453,6 +481,14 @@ fn anthropic_tool_input_schema(tool_id: &str) -> serde_json::Value {
     "get_current_time" => serde_json::json!({
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    }),
+    "load_skill" => serde_json::json!({
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Skill id (matches SKILL.md name / folder)." }
+      },
+      "required": ["name"],
       "additionalProperties": false
     }),
     _ => serde_json::json!({
@@ -686,11 +722,29 @@ fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
   let app_config = load_config()?;
   let model_config = load_model_config()?;
   let provider = resolve_provider(&model_config, req.provider_id.as_deref())?;
-  let pairs: Vec<(String, String)> = req
+  let skill_ch = req
+    .skill_channel
+    .clone()
+    .filter(|s| !s.trim().is_empty())
+    .unwrap_or_else(|| "chat".to_string());
+  let mut pairs: Vec<(String, String)> = req
     .messages
     .into_iter()
     .map(|m| (m.role, m.content))
     .collect();
+  let l1 = skills::build_skill_l1_catalog(
+    &skill_ch,
+    &app_config.agent.skill_catalog_mode,
+    app_config.agent.skill_l1_max_chars,
+    app_config.agent.language == "zh",
+  )
+  .unwrap_or_else(|e| {
+    log::warn!("[skills] L1 catalog (complete_chat): {}", e);
+    String::new()
+  });
+  if !l1.trim().is_empty() {
+    pairs.insert(0, ("system".to_string(), l1));
+  }
   let trimmed = trim_turns_for_context(&pairs, app_config.agent.max_context_tokens);
   let printable = serde_json::to_string_pretty(&trimmed).unwrap_or_else(|_| "<serialize_failed>".to_string());
   log::info!("[LLM][complete_chat_cmd][trimmed_messages] {}", printable);
@@ -705,6 +759,13 @@ async fn stream_chat(
   let app_config = load_config()?;
   let model_config = load_model_config()?;
   let provider = resolve_provider(&model_config, req.provider_id.as_deref())?.clone();
+  let skill_ch = req
+    .skill_channel
+    .clone()
+    .filter(|s| !s.trim().is_empty())
+    .unwrap_or_else(|| "chat".to_string());
+  let skill_ch_for_tools = skill_ch.clone();
+  let max_skill_body = app_config.agent.skill_body_max_chars;
   let pairs: Vec<(String, String)> = req
     .messages
     .into_iter()
@@ -730,6 +791,19 @@ async fn stream_chat(
   system_parts.extend(trust_guard_policy_lines());
   if cfg!(windows) {
     system_parts.extend(windows_command_policy_lines());
+  }
+  let l1 = skills::build_skill_l1_catalog(
+    &skill_ch,
+    &app_config.agent.skill_catalog_mode,
+    app_config.agent.skill_l1_max_chars,
+    app_config.agent.language == "zh",
+  )
+  .unwrap_or_else(|e| {
+    log::warn!("[skills] L1 catalog (stream_chat): {}", e);
+    String::new()
+  });
+  if !l1.trim().is_empty() {
+    system_parts.push(l1);
   }
   let mut anthropic_messages: Vec<serde_json::Value> = Vec::new();
   for (role, content) in trim_turns_for_context(&pairs, app_config.agent.max_context_tokens) {
@@ -784,6 +858,18 @@ async fn stream_chat(
       "input_schema": mt.input_schema
     }));
   }
+
+  tool_refs.insert(
+    "load_skill".to_string(),
+    ToolRef {
+      source: ToolSource::Builtin,
+    },
+  );
+  tool_defs.push(serde_json::json!({
+    "name": "load_skill",
+    "description": "Load the full SKILL.md body (procedural instructions) for a named skill. Call when the L1 catalog indicates this skill applies and you need full detail before acting.",
+    "input_schema": anthropic_tool_input_schema("load_skill")
+  }));
 
   let max_loops = app_config.agent.max_iterations.max(1);
   let mut consecutive_tool_failures: Option<(String, String, usize)> = None;
@@ -904,6 +990,28 @@ async fn stream_chat(
         }
       } else {
         let run_result = match &tool_ref {
+          Some(ToolRef {
+            source: ToolSource::Builtin,
+            ..
+          }) if name == "load_skill" => {
+            let nm = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            match skills::load_skill_body_for_channel(nm, &skill_ch_for_tools, max_skill_body) {
+              Ok(text) => Ok(tools::RunToolResponse {
+                ok: true,
+                name: name.clone(),
+                output: serde_json::Value::String(text),
+                error: None,
+                error_code: None,
+              }),
+              Err(e) => Ok(tools::RunToolResponse {
+                ok: false,
+                name: name.clone(),
+                output: serde_json::json!({}),
+                error: Some(e),
+                error_code: Some("load_skill_failed".to_string()),
+              }),
+            }
+          }
           Some(ToolRef {
             source: ToolSource::Builtin,
             ..

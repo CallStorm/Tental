@@ -38,11 +38,14 @@ export type ChatTurn = { role: string; content: string }
 export async function completeChat(payload: {
   providerId?: string | null
   messages: ChatTurn[]
+  /** e.g. `chat`, `evaluation`. Default `chat`. */
+  skillChannel?: string | null
 }): Promise<string> {
   return invoke<string>('complete_chat', {
     req: {
       providerId: payload.providerId ?? null,
       messages: payload.messages,
+      skillChannel: payload.skillChannel ?? null,
     },
   })
 }
@@ -64,6 +67,8 @@ export async function streamChat(options: {
   providerId?: string | null
   messages: ChatTurn[]
   debug?: boolean
+  /** e.g. `chat`, `evaluation`. Default `chat`. */
+  skillChannel?: string | null
   onEvent: (e: StreamChatEvent) => void
 }): Promise<void> {
   let failed = false
@@ -84,6 +89,7 @@ export async function streamChat(options: {
         providerId: options.providerId ?? null,
         messages: options.messages,
         debug: !!options.debug,
+        skillChannel: options.skillChannel ?? null,
       },
       channel,
     }).catch((err) => {

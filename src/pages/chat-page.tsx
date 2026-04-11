@@ -248,6 +248,7 @@ export function ChatPage() {
         providerId: pid,
         messages: turns,
         debug: debugEnabled,
+        skillChannel: 'chat',
         onEvent: (e) => {
           if (e.event === 'debug_trace' && isObject(e.tool)) {
             const stage = typeof e.tool.stage === 'string' ? e.tool.stage : 'trace'
@@ -599,6 +600,7 @@ export function ChatPage() {
         const summary = await completeChat({
           providerId: pid,
           messages: [{ role: 'user', content: userPrompt }],
+          skillChannel: 'chat',
         })
         const summaryMsg: ChatMessage = {
           id: newId(),

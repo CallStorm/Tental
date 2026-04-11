@@ -17,6 +17,10 @@ export type AgentConfig = {
   maxContextTokens: number
   autoRetryEnabled: boolean
   maxRetryCount: number
+  /** L1 skill catalog: `minimal` | `full_yaml` */
+  skillCatalogMode: string
+  skillL1MaxChars: number
+  skillBodyMaxChars: number
 }
 
 export const defaultAgentConfig: AgentConfig = {
@@ -25,6 +29,9 @@ export const defaultAgentConfig: AgentConfig = {
   maxContextTokens: 12000,
   autoRetryEnabled: true,
   maxRetryCount: 2,
+  skillCatalogMode: 'minimal',
+  skillL1MaxChars: 12000,
+  skillBodyMaxChars: 200000,
 }
 
 export const defaultConfig: AppConfig = {
@@ -59,6 +66,19 @@ export async function loadConfig(): Promise<AppConfig> {
           typeof config.agent?.maxRetryCount === 'number'
             ? config.agent.maxRetryCount
             : defaultAgentConfig.maxRetryCount,
+        skillCatalogMode:
+          typeof config.agent?.skillCatalogMode === 'string' &&
+          config.agent.skillCatalogMode.trim()
+            ? config.agent.skillCatalogMode.trim()
+            : defaultAgentConfig.skillCatalogMode,
+        skillL1MaxChars:
+          typeof config.agent?.skillL1MaxChars === 'number'
+            ? config.agent.skillL1MaxChars
+            : defaultAgentConfig.skillL1MaxChars,
+        skillBodyMaxChars:
+          typeof config.agent?.skillBodyMaxChars === 'number'
+            ? config.agent.skillBodyMaxChars
+            : defaultAgentConfig.skillBodyMaxChars,
       },
       chatUiSkin: normalizeChatSkinId(config.chatUiSkin),
       chatUiPersonaEnabled:

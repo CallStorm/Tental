@@ -156,6 +156,7 @@ export async function runEvaluationStream(options: {
     providerId: options.providerId,
     messages: turns,
     debug: options.debug,
+    skillChannel: 'evaluation',
     onEvent: (e: StreamChatEvent) => {
       if (e.event === 'debug_trace' && isObject(e.tool)) {
         const stage = typeof e.tool.stage === 'string' ? e.tool.stage : 'trace'
@@ -272,6 +273,7 @@ ${options.traceSummary || '（无）'}
   const text = await completeChat({
     providerId: options.providerId,
     messages: [{ role: 'user', content: payload }],
+    skillChannel: 'evaluation',
   })
   return parseJudgeJson(text, options.passThreshold)
 }
@@ -294,6 +296,7 @@ export async function generateOneEvaluationCase(options: {
   const raw = await completeChat({
     providerId: options.providerId,
     messages: [{ role: 'user', content: buildGenerateOneCasePrompt(options.userHint) }],
+    skillChannel: 'evaluation',
   })
   const trimmed = raw.trim()
   try {
