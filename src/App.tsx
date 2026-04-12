@@ -2,6 +2,9 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/app-shell'
 import { ChatPage } from '@/pages/chat-page'
 import { ComingSoonPage } from '@/pages/coming-soon-page'
+import { ScheduledTasksPage } from '@/pages/scheduled-tasks-page'
+import { WorkflowEditorPage } from '@/pages/workflow-editor-page'
+import { WorkflowListPage } from '@/pages/workflow-list-page'
 import { SettingsGeneralPage } from '@/pages/settings-general-page'
 import { SettingsAgentPage } from '@/pages/settings-agent-page'
 import { SettingsLayoutPage } from '@/pages/settings-layout-page'
@@ -20,8 +23,9 @@ function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/evaluation" element={<EvaluationPage />} />
         <Route path="/knowledge" element={<ComingSoonPage title="知识库" />} />
-        <Route path="/workflow" element={<ComingSoonPage title="工作流" />} />
-        <Route path="/tasks" element={<ComingSoonPage title="定时任务" />} />
+        <Route path="/workflow" element={<WorkflowListPage />} />
+        <Route path="/workflow/:id/edit" element={<WorkflowEditorPage />} />
+        <Route path="/tasks" element={<ScheduledTasksPage />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/skills" element={<SkillsPage />} />

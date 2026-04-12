@@ -14,6 +14,7 @@
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
     "@tauri-apps/api": "^2.10.1",
+    "@xyflow/react": "^12.3.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "i18next": "^26.0.3",

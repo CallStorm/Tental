@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Rust — alternate Cargo target dir (e.g. agent / CARGO_TARGET_DIR)
+target-agent-check/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

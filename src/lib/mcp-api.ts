@@ -25,6 +25,8 @@ export type McpConnectionTestResult = {
 export type McpToolMeta = {
   name: string
   description: string
+  /** JSON Schema for tools/call arguments (when server provides it). */
+  inputSchema?: unknown
 }
 
 export async function listMcpClients(): Promise<McpClientConfig[]> {

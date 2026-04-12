@@ -4,6 +4,9 @@ mod llm;
 mod mcp;
 mod skills;
 mod tools;
+mod scheduled_task_store;
+mod workflow_engine;
+mod workflow_store;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -198,6 +201,154 @@ fn load_evaluation_store() -> Result<evaluation_store::EvaluationStore, String> 
 #[tauri::command]
 fn save_evaluation_store(store: evaluation_store::EvaluationStore) -> Result<(), String> {
   evaluation_store::save_evaluation_store_disk(&store)
+}
+
+#[tauri::command]
+fn load_workflow_store() -> Result<workflow_store::WorkflowStore, String> {
+  workflow_store::load_workflow_store_disk()
+}
+
+#[tauri::command]
+fn save_workflow_store(store: workflow_store::WorkflowStore) -> Result<(), String> {
+  workflow_store::save_workflow_store_disk(&store)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteWorkflowRequest {
+  workflow_id: String,
+  #[serde(default)]
+  start_inputs: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetBuiltinToolSchemaRequest {
+  tool_id: String,
+}
+
+#[tauri::command]
+fn get_builtin_tool_input_schema(req: GetBuiltinToolSchemaRequest) -> serde_json::Value {
+  anthropic_tool_input_schema(req.tool_id.trim())
+}
+
+fn execute_workflow_persist(workflow_id: &str, start_inputs: Value) -> Result<workflow_store::WorkflowRunRecord, String> {
+  let mut store = workflow_store::load_workflow_store_disk()?;
+  let wf = store
+    .workflows
+    .iter()
+    .find(|w| w.id == workflow_id)
+    .ok_or_else(|| "找不到工作流".to_string())?
+    .clone();
+  let run = workflow_engine::execute_workflow(&wf, start_inputs)?;
+  store.runs.push(run.clone());
+  workflow_store::save_workflow_store_disk(&store)?;
+  Ok(run)
+}
+
+#[tauri::command]
+fn execute_workflow(req: ExecuteWorkflowRequest) -> Result<workflow_store::WorkflowRunRecord, String> {
+  execute_workflow_persist(&req.workflow_id, req.start_inputs)
+}
+
+#[tauri::command]
+fn load_scheduled_task_store() -> Result<scheduled_task_store::ScheduledTaskStore, String> {
+  scheduled_task_store::load_scheduled_task_store_disk()
+}
+
+#[tauri::command]
+fn save_scheduled_task_store(store: scheduled_task_store::ScheduledTaskStore) -> Result<(), String> {
+  scheduled_task_store::save_scheduled_task_store_disk(&store)
+}
+
+#[tauri::command]
+fn run_scheduled_task_now(task_id: String) -> Result<scheduled_task_store::ScheduledTaskRun, String> {
+  let mut ts = scheduled_task_store::load_scheduled_task_store_disk()?;
+  let Some(pos) = ts.tasks.iter().position(|t| t.id == task_id) else {
+    return Err("找不到任务".to_string());
+  };
+  if ts.tasks[pos].running {
+    return Err("任务正在执行".to_string());
+  }
+  ts.tasks[pos].running = true;
+  scheduled_task_store::save_scheduled_task_store_disk(&ts)?;
+  let wf_id = ts.tasks[pos].workflow_id.clone();
+  let inputs = ts.tasks[pos].start_inputs.clone();
+  let tid = ts.tasks[pos].id.clone();
+  let run_res = execute_workflow_persist(&wf_id, inputs);
+  ts.tasks[pos].running = false;
+  let now_ms = chrono::Local::now().timestamp_millis();
+  match run_res {
+    Ok(run) => {
+      let rec =
+        scheduled_task_store::append_task_run_and_update_task(&mut ts, &tid, &run, "manual", now_ms)?;
+      scheduled_task_store::save_scheduled_task_store_disk(&ts)?;
+      Ok(rec)
+    }
+    Err(e) => {
+      ts.tasks[pos].updated_at = now_ms;
+      scheduled_task_store::save_scheduled_task_store_disk(&ts)?;
+      Err(e)
+    }
+  }
+}
+
+fn tick_scheduled_tasks() {
+  let result = (|| -> Result<(), String> {
+    let mut ts = scheduled_task_store::load_scheduled_task_store_disk()?;
+    let now = chrono::Local::now();
+    let now_ms = now.timestamp_millis();
+    let mut dirty = false;
+    let n = ts.tasks.len();
+    for i in 0..n {
+      if !ts.tasks[i].enabled || ts.tasks[i].running {
+        continue;
+      }
+      let Some((slot_key, slot_dt)) = scheduled_task_store::current_due_slot(now, &ts.tasks[i].schedule) else {
+        continue;
+      };
+      if ts.tasks[i].last_fired_slot.as_deref() == Some(slot_key.as_str()) {
+        continue;
+      }
+      if now > slot_dt + scheduled_task_store::SCHEDULE_FIRE_GRACE {
+        ts.tasks[i].last_fired_slot = Some(slot_key);
+        ts.tasks[i].updated_at = now_ms;
+        dirty = true;
+        continue;
+      }
+      let tid = ts.tasks[i].id.clone();
+      let wf_id = ts.tasks[i].workflow_id.clone();
+      let inputs = ts.tasks[i].start_inputs.clone();
+      ts.tasks[i].running = true;
+      scheduled_task_store::save_scheduled_task_store_disk(&ts)?;
+      let run_res = execute_workflow_persist(&wf_id, inputs);
+      ts.tasks[i].running = false;
+      match run_res {
+        Ok(run) => {
+          scheduled_task_store::append_task_run_and_update_task(&mut ts, &tid, &run, "schedule", now_ms)?;
+          if let Some(t) = ts.tasks.iter_mut().find(|t| t.id == tid) {
+            t.last_fired_slot = Some(slot_key);
+          }
+          dirty = true;
+        }
+        Err(e) => {
+          log::error!("[scheduler] task {}: {}", tid, e);
+          if let Some(t) = ts.tasks.iter_mut().find(|t| t.id == tid) {
+            t.last_fired_slot = Some(slot_key);
+            t.updated_at = now_ms;
+          }
+          dirty = true;
+        }
+      }
+    }
+    if dirty {
+      scheduled_task_store::save_scheduled_task_store_disk(&ts)?;
+    }
+    Ok(())
+  })();
+  if let Err(e) = result {
+    log::warn!("[scheduler] tick: {}", e);
+  }
 }
 
 #[tauri::command]
@@ -436,7 +587,7 @@ fn resolve_provider<'a>(
     .ok_or_else(|| format!("找不到供应商: {}", id))
 }
 
-fn anthropic_tool_input_schema(tool_id: &str) -> serde_json::Value {
+pub(crate) fn anthropic_tool_input_schema(tool_id: &str) -> serde_json::Value {
   match tool_id {
     "bash" => serde_json::json!({
       "type": "object",
@@ -748,6 +899,41 @@ fn complete_chat(req: CompleteChatRequest) -> Result<String, String> {
   let trimmed = trim_turns_for_context(&pairs, app_config.agent.max_context_tokens);
   let printable = serde_json::to_string_pretty(&trimmed).unwrap_or_else(|_| "<serialize_failed>".to_string());
   log::info!("[LLM][complete_chat_cmd][trimmed_messages] {}", printable);
+  call_complete_with_retry(provider, &trimmed, &app_config.agent)
+}
+
+/// LLM step for workflow nodes (skill channel `workflow`, no chat UI).
+pub fn workflow_complete_chat(
+  provider_id: Option<String>,
+  system_message: String,
+  user_message: String,
+) -> Result<String, String> {
+  let app_config = load_config()?;
+  let model_config = load_model_config()?;
+  let provider = resolve_provider(&model_config, provider_id.as_deref())?;
+  let skill_ch = "workflow".to_string();
+  let mut pairs: Vec<(String, String)> = Vec::new();
+  let l1 = skills::build_skill_l1_catalog(
+    &skill_ch,
+    &app_config.agent.skill_catalog_mode,
+    app_config.agent.skill_l1_max_chars,
+    app_config.agent.language == "zh",
+  )
+  .unwrap_or_else(|e| {
+    log::warn!("[skills] L1 catalog (workflow): {}", e);
+    String::new()
+  });
+  if !l1.trim().is_empty() {
+    pairs.push(("system".to_string(), l1));
+  }
+  if !system_message.trim().is_empty() {
+    pairs.push(("system".to_string(), system_message));
+  }
+  pairs.push(("user".to_string(), user_message));
+  let trimmed = trim_turns_for_context(&pairs, app_config.agent.max_context_tokens);
+  let printable =
+    serde_json::to_string_pretty(&trimmed).unwrap_or_else(|_| "<serialize_failed>".to_string());
+  log::info!("[LLM][workflow_complete_chat][trimmed_messages] {}", printable);
   call_complete_with_retry(provider, &trimmed, &app_config.agent)
 }
 
@@ -1205,6 +1391,15 @@ pub fn run() {
             .build(),
         )?;
       }
+      let poll = if cfg!(debug_assertions) {
+        std::time::Duration::from_secs(10)
+      } else {
+        std::time::Duration::from_secs(30)
+      };
+      std::thread::spawn(move || loop {
+        std::thread::sleep(poll);
+        tick_scheduled_tasks();
+      });
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -1218,6 +1413,13 @@ pub fn run() {
       save_chat_store,
       load_evaluation_store,
       save_evaluation_store,
+      load_workflow_store,
+      save_workflow_store,
+      load_scheduled_task_store,
+      save_scheduled_task_store,
+      run_scheduled_task_now,
+      execute_workflow,
+      get_builtin_tool_input_schema,
       list_tools,
       set_tool_enabled,
       load_tool_security,
