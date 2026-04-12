@@ -1,5 +1,6 @@
 mod chat_store;
 mod evaluation_store;
+mod knowledge_base;
 mod llm;
 mod mcp;
 mod skills;
@@ -1443,6 +1444,14 @@ pub fn run() {
       bootstrap_builtin_skills,
       complete_chat,
       stream_chat,
+      knowledge_base::kb_list_tree,
+      knowledge_base::kb_read,
+      knowledge_base::kb_write,
+      knowledge_base::kb_delete,
+      knowledge_base::kb_rename,
+      knowledge_base::kb_mkdir,
+      knowledge_base::kb_search,
+      knowledge_base::kb_resolve_asset_path,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

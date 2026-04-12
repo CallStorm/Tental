@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/app-shell'
 import { ChatPage } from '@/pages/chat-page'
 import { ComingSoonPage } from '@/pages/coming-soon-page'
+import { KnowledgeBasePage } from '@/pages/knowledge-base-page'
 import { ScheduledTasksPage } from '@/pages/scheduled-tasks-page'
 import { WorkflowEditorPage } from '@/pages/workflow-editor-page'
 import { WorkflowListPage } from '@/pages/workflow-list-page'
@@ -22,7 +23,7 @@ function App() {
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/evaluation" element={<EvaluationPage />} />
-        <Route path="/knowledge" element={<ComingSoonPage title="知识库" />} />
+        <Route path="/knowledge" element={<KnowledgeBasePage />} />
         <Route path="/workflow" element={<WorkflowListPage />} />
         <Route path="/workflow/:id/edit" element={<WorkflowEditorPage />} />
         <Route path="/tasks" element={<ScheduledTasksPage />} />

@@ -24,7 +24,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: https: http: tauri:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:*;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/.tental/kbs/**"]
+      }
     }
   },
   "bundle": {

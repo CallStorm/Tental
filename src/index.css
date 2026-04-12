@@ -8,6 +8,83 @@ body,
   min-height: 100vh;
 }
 
+/* Tiptap knowledge base rich editor */
+.kb-rich-editor-prose :where(h1) {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 1rem 0 0.5rem;
+}
+.kb-rich-editor-prose :where(h2) {
+  font-size: 1.35rem;
+  font-weight: 650;
+  margin: 0.85rem 0 0.4rem;
+}
+.kb-rich-editor-prose :where(h3) {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.35rem;
+}
+.kb-rich-editor-prose :where(p) {
+  margin: 0.5rem 0;
+}
+.kb-rich-editor-prose :where(ul, ol) {
+  margin: 0.5rem 0;
+  padding-left: 1.35rem;
+}
+.kb-rich-editor-prose :where(blockquote) {
+  border-left: 3px solid rgb(203 213 225);
+  margin: 0.75rem 0;
+  padding-left: 0.85rem;
+  color: rgb(71 85 105);
+}
+.dark .kb-rich-editor-prose :where(blockquote) {
+  border-left-color: rgb(71 85 105);
+  color: rgb(203 213 225);
+}
+.kb-rich-editor-prose :where(pre) {
+  margin: 0.65rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: rgb(241 245 249);
+  font-size: 0.875rem;
+  overflow-x: auto;
+}
+.dark .kb-rich-editor-prose :where(pre) {
+  background: rgb(15 23 42);
+}
+.kb-rich-editor-prose :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.65rem 0;
+  font-size: 0.9rem;
+}
+.kb-rich-editor-prose :where(th, td) {
+  border: 1px solid rgb(226 232 240);
+  padding: 0.35rem 0.5rem;
+}
+.dark .kb-rich-editor-prose :where(th, td) {
+  border-color: rgb(51 65 85);
+}
+.kb-rich-editor-prose :where(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+}
+.kb-rich-editor-prose :where(a) {
+  color: rgb(124 58 237);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.kb-rich-editor-prose :where(hr) {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid rgb(226 232 240);
+}
+.dark .kb-rich-editor-prose :where(hr) {
+  border-top-color: rgb(51 65 85);
+}
+
 body {
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
