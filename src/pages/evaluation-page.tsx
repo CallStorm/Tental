@@ -11,7 +11,7 @@ import {
   generateOneEvaluationCase,
   judgeEvaluationItem,
   loadEvaluationStore,
-  loadModelSkinContext,
+  loadEvaluationModelContext,
   patchSuite,
   runEvaluationStream,
   saveEvaluationStore,
@@ -208,7 +208,7 @@ export function EvaluationPage() {
 
   const generateOne = useCallback(async () => {
     setHint(null)
-    const ctx = await loadModelSkinContext()
+    const ctx = await loadEvaluationModelContext()
     if (!ctx.defaultProviderId) {
       setHint('请先在设置中配置默认模型供应商')
       return
@@ -249,7 +249,7 @@ export function EvaluationPage() {
   const startBatch = useCallback(async () => {
     setHint(null)
     if (!store || !activeSuite) return
-    const ctx = await loadModelSkinContext()
+    const ctx = await loadEvaluationModelContext()
     if (!ctx.defaultProviderId) {
       setHint('请先在设置中配置默认模型供应商')
       return
@@ -293,8 +293,6 @@ export function EvaluationPage() {
           const streamed = await runEvaluationStream({
             providerId: ctx.defaultProviderId,
             userPrompt: c.prompt,
-            skinId: ctx.skinId,
-            personaEnabled: ctx.personaEnabled,
             debug: debugEnabled,
           })
           finalAnswer = streamed.content

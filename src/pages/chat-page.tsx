@@ -36,13 +36,7 @@ import {
   type ChatTurn,
 } from '@/lib/chat-api'
 import { loadModelConfig, type ModelConfig } from '@/lib/model-config'
-import {
-  buildApiTurns,
-  getSkinUiStrings,
-  labelForToolName,
-  normalizeChatSkinId,
-} from '@/lib/chat-ui-skins'
-import { defaultConfig, loadConfig, type AppConfig } from '@/lib/tauri-config'
+import { buildApiTurns, getSkinUiStrings } from '@/lib/chat-ui-skins'
 import { cn } from '@/lib/utils'
 
 const MAX_INPUT_CHARS = 10000
@@ -102,7 +96,6 @@ function parseToolCard(content: string): ToolCardData | null {
 
 export function ChatPage() {
   const { t, i18n } = useTranslation()
-  const [appCfg, setAppCfg] = useState<AppConfig>(defaultConfig)
   const [store, setStore] = useState<ChatStoreData | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
@@ -354,13 +347,8 @@ export function ChatPage() {
 
   useEffect(() => {
     void (async () => {
-      const [s, m, cfg] = await Promise.all([
-        loadChatStore(),
-        loadModelConfig(),
-        loadConfig(),
-      ])
+      const [s, m] = await Promise.all([loadChatStore(), loadModelConfig()])
       setModelConfig(m)
-      setAppCfg(cfg)
       const titleNew = i18n.t('chat.newChatTitle')
       if (!s.sessions.length) {
         const id = newId()
@@ -424,12 +412,7 @@ export function ChatPage() {
     return store.messages[activeId] ?? []
   }, [store, activeId])
 
-  const chatSkinId = normalizeChatSkinId(appCfg.chatUiSkin)
-  const skinLang = i18n.language.startsWith('zh') ? 'zh' : 'en'
-  const skinLabels = useMemo(
-    () => getSkinUiStrings(chatSkinId, skinLang, t),
-    [chatSkinId, skinLang, t],
-  )
+  const skinLabels = useMemo(() => getSkinUiStrings(t), [t])
 
   const activeSession = useMemo(() => {
     if (!store || !activeId) return null
@@ -655,11 +638,7 @@ export function ChatPage() {
       s = { ...s, messages: { ...s.messages, [sid]: afterUser } }
       await persist(s)
 
-      const turns = buildApiTurns(
-        afterUser,
-        normalizeChatSkinId(appCfg.chatUiSkin),
-        appCfg.chatUiPersonaEnabled && appCfg.chatUiSkin !== 'default',
-      )
+      const turns = buildApiTurns(afterUser)
       setSending(true)
       setError(null)
       try {
@@ -673,8 +652,6 @@ export function ChatPage() {
     [
       activeId,
       store,
-      appCfg.chatUiSkin,
-      appCfg.chatUiPersonaEnabled,
       ensureDefaultProvider,
       maybeSetTitleFromUser,
       persist,
@@ -784,10 +761,7 @@ export function ChatPage() {
   }
 
   return (
-    <div
-      className="relative flex min-h-0 flex-1 flex-col"
-      data-chat-persona={appCfg.chatUiPersonaEnabled ? 'on' : 'off'}
-    >
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {toast ? (
         <div className="skin-toast pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900">
           {toast}
@@ -980,7 +954,7 @@ export function ChatPage() {
                       if (!card) {
                         return <p className="whitespace-pre-wrap">{m.content}</p>
                       }
-                      const toolTitle = labelForToolName(chatSkinId, card.name)
+                      const toolTitle = card.name
                       const badge =
                         card.status === 'calling'
                           ? skinLabels.toolStatusCalling
@@ -1132,10 +1106,7 @@ export function ChatPage() {
                 <Button
                   type="button"
                   size="sm"
-                  className={cn(
-                    'h-9 w-9 p-0',
-                    chatSkinId === 'imperial' && 'chat-skin-seal-btn',
-                  )}
+                  className="h-9 w-9 p-0"
                   disabled={
                     sending || !input.trim() || input.length > MAX_INPUT_CHARS
                   }

@@ -2,14 +2,10 @@ import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { SidebarNav } from '@/components/layout/sidebar-nav'
 import { applyChatSkin } from '@/lib/chat-ui-skins'
-import { loadConfig } from '@/lib/tauri-config'
 
 export function AppShell() {
   useEffect(() => {
-    void (async () => {
-      const cfg = await loadConfig()
-      applyChatSkin(cfg.chatUiSkin)
-    })()
+    applyChatSkin()
   }, [])
 
   return (

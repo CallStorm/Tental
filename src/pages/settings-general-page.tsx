@@ -9,8 +9,6 @@ import {
   saveConfig,
   type AppConfig,
 } from '@/lib/tauri-config'
-import type { ChatSkinId } from '@/lib/chat-ui-skins'
-import { applyChatSkin } from '@/lib/chat-ui-skins'
 import { applyTheme } from '@/lib/theme'
 
 export function SettingsGeneralPage() {
@@ -33,7 +31,6 @@ export function SettingsGeneralPage() {
   const updateConfig = async (next: AppConfig) => {
     setConfig(next)
     applyTheme(next.theme)
-    applyChatSkin(next.chatUiSkin)
     await i18n.changeLanguage(next.language)
     await saveConfig(next)
   }
@@ -99,56 +96,6 @@ export function SettingsGeneralPage() {
               })
             }
           />
-        </div>
-
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <label htmlFor="chatUiSkin" className="font-medium">
-            {t('settings.chatSkin.label')}
-          </label>
-          <Select
-            id="chatUiSkin"
-            className="md:w-56"
-            value={config.chatUiSkin}
-            options={[
-              { value: 'default', label: t('settings.chatSkin.default') },
-              { value: 'imperial', label: t('settings.chatSkin.imperial') },
-              { value: 'journey_west', label: t('settings.chatSkin.journeyWest') },
-              {
-                value: 'three_kingdoms',
-                label: t('settings.chatSkin.threeKingdoms'),
-              },
-            ]}
-            onChange={(event) => {
-              const v = event.target.value as ChatSkinId
-              void updateConfig({
-                ...config,
-                chatUiSkin: v,
-                chatUiPersonaEnabled:
-                  v === 'default' ? false : config.chatUiPersonaEnabled,
-              })
-            }}
-          />
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 dark:border-slate-700">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <span className="font-medium">{t('settings.chatSkin.persona.label')}</span>
-            <Switch
-              checked={
-                config.chatUiSkin !== 'default' && config.chatUiPersonaEnabled
-              }
-              disabled={config.chatUiSkin === 'default'}
-              onChange={(event) =>
-                void updateConfig({
-                  ...config,
-                  chatUiPersonaEnabled: event.target.checked,
-                })
-              }
-            />
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            {t('settings.chatSkin.persona.hint')}
-          </p>
         </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">

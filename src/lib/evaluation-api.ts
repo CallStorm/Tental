@@ -1,7 +1,6 @@
 import { completeChat, streamChat, type ChatMessage, type ChatTurn, type StreamChatEvent } from '@/lib/chat-api'
 import { loadModelConfig } from '@/lib/model-config'
-import { buildApiTurns, normalizeChatSkinId, type ChatSkinId } from '@/lib/chat-ui-skins'
-import { loadConfig } from '@/lib/tauri-config'
+import { buildApiTurns } from '@/lib/chat-ui-skins'
 import { invoke } from '@tauri-apps/api/core'
 
 export type EvaluationCase = {
@@ -126,8 +125,6 @@ function trimLogs(lines: string[], max: number): string[] {
 export async function runEvaluationStream(options: {
   providerId: string | null
   userPrompt: string
-  skinId: ChatSkinId
-  personaEnabled: boolean
   debug: boolean
 }): Promise<{ content: string; thinking: string; debugLogs: string[]; toolTraces: string[] }> {
   const userMsg: ChatMessage = {
@@ -136,7 +133,7 @@ export async function runEvaluationStream(options: {
     content: options.userPrompt,
     createdAt: nowMs(),
   }
-  const turns: ChatTurn[] = buildApiTurns([userMsg], options.skinId, options.personaEnabled)
+  const turns: ChatTurn[] = buildApiTurns([userMsg])
 
   let thinkingAcc = ''
   let contentAcc = ''
@@ -328,16 +325,12 @@ export function summarizeRunItems(items: EvaluationRunItem[]): EvaluationRunSumm
   }
 }
 
-export async function loadModelSkinContext(): Promise<{
+export async function loadEvaluationModelContext(): Promise<{
   defaultProviderId: string | null
-  skinId: ChatSkinId
-  personaEnabled: boolean
 }> {
-  const [model, cfg] = await Promise.all([loadModelConfig(), loadConfig()])
+  const model = await loadModelConfig()
   return {
     defaultProviderId: model?.defaultProviderId ?? null,
-    skinId: normalizeChatSkinId(cfg.chatUiSkin),
-    personaEnabled: cfg.chatUiPersonaEnabled && cfg.chatUiSkin !== 'default',
   }
 }
 

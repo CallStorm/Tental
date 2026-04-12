@@ -17,20 +17,12 @@ use std::path::PathBuf;
 pub use chat_store::{ChatMessage, ChatSession, ChatStore};
 pub use tools::{ToolMeta, ToolSecurityConfig};
 
-fn default_chat_ui_skin() -> String {
-  "default".to_string()
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct AppConfig {
   theme: String,
   language: String,
   agent: AgentConfig,
-  #[serde(default = "default_chat_ui_skin")]
-  chat_ui_skin: String,
-  #[serde(default)]
-  chat_ui_persona_enabled: bool,
 }
 
 fn default_skill_catalog_mode() -> String {
@@ -68,8 +60,6 @@ impl Default for AppConfig {
       theme: "system".to_string(),
       language: "zh".to_string(),
       agent: AgentConfig::default(),
-      chat_ui_skin: "default".to_string(),
-      chat_ui_persona_enabled: false,
     }
   }
 }
