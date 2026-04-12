@@ -1,14 +1,6 @@
-export type Theme = 'light' | 'dark' | 'system'
-
-export function applyTheme(theme: Theme) {
+/** App chrome is light-only; dark / system modes are removed. */
+export function applyTheme() {
   const root = document.documentElement
-  root.classList.remove('light', 'dark')
-
-  if (theme === 'system') {
-    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    root.classList.add(isDark ? 'dark' : 'light')
-    return
-  }
-
-  root.classList.add(theme)
+  root.classList.remove('dark')
+  root.classList.add('light')
 }

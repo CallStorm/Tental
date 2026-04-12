@@ -17,11 +17,17 @@ use std::path::PathBuf;
 pub use chat_store::{ChatMessage, ChatSession, ChatStore};
 pub use tools::{ToolMeta, ToolSecurityConfig};
 
+fn default_chat_skin() -> String {
+  "default".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct AppConfig {
   theme: String,
   language: String,
+  #[serde(default = "default_chat_skin")]
+  chat_skin: String,
   agent: AgentConfig,
 }
 
@@ -57,8 +63,9 @@ struct AgentConfig {
 impl Default for AppConfig {
   fn default() -> Self {
     Self {
-      theme: "system".to_string(),
+      theme: "light".to_string(),
       language: "zh".to_string(),
+      chat_skin: default_chat_skin(),
       agent: AgentConfig::default(),
     }
   }

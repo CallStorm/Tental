@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
+import { parseChatSkinId, type ChatSkinId } from '@/lib/chat-ui-skins'
 
 export type AppConfig = {
-  theme: 'light' | 'dark' | 'system'
+  /** Fixed light mode only (persisted for backward compatibility). */
+  theme: 'light'
+  chatSkin: ChatSkinId
   language: 'zh' | 'en'
   agent: AgentConfig
 }
@@ -30,7 +33,8 @@ export const defaultAgentConfig: AgentConfig = {
 }
 
 export const defaultConfig: AppConfig = {
-  theme: 'system',
+  theme: 'light',
+  chatSkin: 'default',
   language: 'zh',
   agent: defaultAgentConfig,
 }
@@ -39,7 +43,8 @@ export async function loadConfig(): Promise<AppConfig> {
   try {
     const config = await invoke<AppConfig>('load_config')
     return {
-      theme: config.theme ?? defaultConfig.theme,
+      theme: 'light',
+      chatSkin: parseChatSkinId(config.chatSkin as string | undefined),
       language: config.language ?? defaultConfig.language,
       agent: {
         language: config.agent?.language ?? defaultAgentConfig.language,

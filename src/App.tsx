@@ -15,10 +15,12 @@ import { McpPage } from '@/pages/mcp-page'
 import { SkillsPage } from '@/pages/skills-page'
 import { ToolsPage } from '@/pages/tools-page'
 import { EvaluationPage } from '@/pages/evaluation-page'
+import { AppPreferencesProvider } from '@/contexts/app-preferences'
 
 function App() {
   return (
-    <Routes>
+    <AppPreferencesProvider>
+      <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
@@ -42,7 +44,8 @@ function App() {
           />
         </Route>
       </Route>
-    </Routes>
+      </Routes>
+    </AppPreferencesProvider>
   )
 }
 

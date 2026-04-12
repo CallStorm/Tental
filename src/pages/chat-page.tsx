@@ -36,6 +36,7 @@ import {
   type ChatTurn,
 } from '@/lib/chat-api'
 import { loadModelConfig, type ModelConfig } from '@/lib/model-config'
+import { useAppPreferences } from '@/contexts/app-preferences'
 import { buildApiTurns, getSkinUiStrings } from '@/lib/chat-ui-skins'
 import { cn } from '@/lib/utils'
 
@@ -96,6 +97,7 @@ function parseToolCard(content: string): ToolCardData | null {
 
 export function ChatPage() {
   const { t, i18n } = useTranslation()
+  const { chatSkin } = useAppPreferences()
   const [store, setStore] = useState<ChatStoreData | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
@@ -412,7 +414,7 @@ export function ChatPage() {
     return store.messages[activeId] ?? []
   }, [store, activeId])
 
-  const skinLabels = useMemo(() => getSkinUiStrings(t), [t])
+  const skinLabels = useMemo(() => getSkinUiStrings(t, chatSkin), [t, chatSkin])
 
   const activeSession = useMemo(() => {
     if (!store || !activeId) return null
@@ -1106,7 +1108,7 @@ export function ChatPage() {
                 <Button
                   type="button"
                   size="sm"
-                  className="h-9 w-9 p-0"
+                  className="chat-skin-send-btn h-9 w-9 p-0"
                   disabled={
                     sending || !input.trim() || input.length > MAX_INPUT_CHARS
                   }
